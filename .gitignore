@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.env
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Arduino / PlatformIO build artifacts
+.pio/
+.pioenvs/
+.piolibdeps/
+esp32_firmware/.pio/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# ML model artifacts
+ml/models/*.pkl
+ml/models/*.joblib
+
+# Logs
+*.log
+
+# Gemini / Antigravity internal files
+.gemini/

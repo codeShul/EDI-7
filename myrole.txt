@@ -1,0 +1,1307 @@
+Yes. Since you want this for **Antigravity execution**, you need a specification that is detailed enough for an AI coding agent to understand **what to build, what runs where, how the pieces communicate, and what is still a design choice**.
+
+I’m grounding this in your **EDI.txt project specification**. I’ll also explicitly mark things that the document leaves open rather than pretending they are already decided. The source itself says the communication protocol and exact AI placement must be experimentally validated.  
+
+# SecureMesh AI — End-to-End Implementation Specification
+
+## 1. Project identity
+
+**Project name:**
+
+> **SecureMesh AI: An Edge AI-Based Intrusion Detection and Self-Healing Framework for ESP32 IoT Mesh Networks**
+
+The system is a **hardware cybersecurity prototype** consisting of several ESP32 IoT nodes forming a wireless mesh. The nodes exchange data and generate network telemetry. An IDS analyzes this telemetry using ML, detects suspicious behaviour, identifies the affected node, and triggers isolation/recovery so communication can continue through an alternative path. 
+
+The intended environment is a **localized IoT/industrial environment** such as:
+
+* Smart campus
+* Industrial IoT
+* Warehouse
+* Laboratory
+* Localized smart-city IoT cluster
+
+It should **not** claim city-wide ESP32 wireless coverage. 
+
+---
+
+# 2. The complete system in one diagram
+
+This is the architecture I would give Antigravity:
+
+```text
+                         ┌───────────────────────┐
+                         │      WEB DASHBOARD    │
+                         │ React / Web UI        │
+                         └───────────▲───────────┘
+                                     │
+                              REST / WebSocket
+                                     │
+                         ┌───────────┴───────────┐
+                         │   EDGE / GATEWAY PC   │
+                         │                       │
+                         │  Log Collector        │
+                         │  Feature Extraction   │
+                         │  ML IDS               │
+                         │  Decision Engine      │
+                         │  Event Logger         │
+                         │  Recovery Controller  │
+                         │  API Server           │
+                         └───────────▲───────────┘
+                                     │
+                            Gateway connection
+                                     │
+                         ┌───────────┴───────────┐
+                         │   GATEWAY ESP32       │
+                         │ / monitoring node     │
+                         └───────────▲───────────┘
+                                     │
+                              WIRELESS MESH
+                                     │
+             ┌──────────────────────┼──────────────────────┐
+             │                      │                      │
+             ▼                      ▼                      ▼
+       ┌───────────┐          ┌───────────┐          ┌───────────┐
+       │ ESP32 N1  │◄────────►│ ESP32 N2  │◄────────►│ ESP32 N3  │
+       │ Sensor    │          │ Sensor    │          │ Sensor    │
+       └─────┬─────┘          └─────┬─────┘          └─────┬─────┘
+             │                      │                      │
+             └──────────────────────┼──────────────────────┘
+                                    │
+                              ┌─────▼─────┐
+                              │ ESP32 N4  │
+                              │ Sensor    │
+                              └───────────┘
+```
+
+The source specification describes essentially this architecture: ESP32 nodes → wireless mesh → gateway/monitoring node → edge AI/local computer → IDS, event logger, dashboard, and isolation/recovery decision. 
+
+---
+
+# 3. What each component actually does
+
+## A. ESP32 nodes
+
+Each ESP32 represents an IoT device.
+
+Every node has:
+
+```text
+Node ID
+MAC address
+Network identity
+Neighbour information
+Sensor data
+Communication logic
+Telemetry generation
+Packet handling
+```
+
+The nodes are responsible for **network participation**, not necessarily heavy AI.
+
+Each node should:
+
+1. Initialize.
+2. Register/discover itself.
+3. Discover neighbours.
+4. Join the mesh.
+5. Exchange packets.
+6. Generate/collect sensor data.
+7. Forward packets.
+8. Maintain network statistics.
+9. Respond to control commands from the gateway.
+
+The specification explicitly defines these responsibilities. 
+
+---
+
+# 4. Hardware
+
+Initial prototype:
+
+```text
+4–5 × ESP32 development boards
+DHT11/DHT22
+Optional LDR
+Optional MQ-series sensor
+LEDs
+Resistors
+Buzzer
+Breadboards
+Jumper wires
+USB cables
+Power banks / USB power
+Laptop/PC
+```
+
+The sensors are **not the main research contribution**. They provide realistic IoT data for the network. 
+
+You can therefore start with just:
+
+```text
+ESP32
++
+DHT11/DHT22
+```
+
+and add other sensors later.
+
+---
+
+# 5. Mesh topology
+
+You need **redundancy**.
+
+Don't build:
+
+```text
+N1 → N2 → N3 → N4
+```
+
+because if N2 dies, everything after it becomes unreachable.
+
+Instead:
+
+```text
+              N2
+             /  \
+            /    \
+          N1 ──── N3
+            \    /
+             \  /
+              N4
+```
+
+Now there are multiple possible paths.
+
+For example:
+
+```text
+N1 → N2 → N3
+```
+
+and:
+
+```text
+N1 → N4 → N3
+```
+
+If N2 becomes compromised:
+
+```text
+N1    X    N2
+ \          \
+  \          X
+   N4 ───── N3
+```
+
+Traffic can use:
+
+```text
+N1 → N4 → N3
+```
+
+The project specification explicitly requires at least two possible routes between selected nodes for recovery testing. 
+
+---
+
+# 6. Communication protocol
+
+This is **not finalized yet**.
+
+The project specification allows:
+
+* ESP-NOW
+* ESP-WiFi networking
+* ESP-MESH
+* Another ESP32-supported mesh mechanism
+
+The final implementation must state which protocol was actually used. 
+
+### Important for Antigravity
+
+Do **not** hard-code the project specification as:
+
+> "Use ESP-MESH."
+
+Instead tell it:
+
+> "Create the networking layer behind an abstraction so the underlying ESP32 communication implementation can be selected and validated experimentally."
+
+For example:
+
+```text
+MeshNetwork
+│
+├── discoverNodes()
+├── sendPacket()
+├── receivePacket()
+├── getNeighbours()
+├── getRoute()
+├── removeNode()
+├── restoreNode()
+└── getNetworkStats()
+```
+
+Then the implementation can use the selected ESP32 technology.
+
+---
+
+# 7. Application-level packet
+
+Your nodes should exchange structured messages.
+
+For example:
+
+```json
+{
+  "source": "NODE_01",
+  "destination": "NODE_03",
+  "sequence": 1025,
+  "timestamp": 1724412300,
+  "temperature": 29.4,
+  "humidity": 62,
+  "node_id": "NODE_01"
+}
+```
+
+The specification suggests fields such as:
+
+* Source node
+* Destination
+* Sequence number
+* Timestamp
+* Sensor value
+* Node identity
+* Optional integrity information
+
+The exact packet format remains an implementation decision. 
+
+---
+
+# 8. Network telemetry
+
+This is **your major responsibility as Member 1**.
+
+The mesh must produce data that the IDS can analyze.
+
+Collect:
+
+```text
+timestamp
+source_node
+destination_node
+
+packet_count
+packet_rate
+
+packet_loss
+latency
+
+RSSI
+retransmission_count
+
+sequence_number
+duplicate_packets
+
+communication_frequency
+
+node_identity
+```
+
+These are specifically identified as useful IDS features in the project specification. 
+
+### Important
+
+You are not simply logging:
+
+```text
+"Node 1 sent packet"
+```
+
+You want measurable network behaviour.
+
+Example:
+
+```json
+{
+  "timestamp": 1724412300,
+  "source": "NODE_01",
+  "destination": "NODE_03",
+  "packet_rate": 18,
+  "packet_loss": 0.02,
+  "latency_ms": 45,
+  "rssi": -61,
+  "retransmissions": 2,
+  "sequence": 1034
+}
+```
+
+This becomes the raw material for Member 3's ML model.
+
+---
+
+# 9. Gateway / Edge Computer
+
+This is where the **main intelligence** can live.
+
+The source specification explicitly permits an edge gateway/local computer for computationally heavier inference while keeping ESP32 nodes lightweight. 
+
+So your architecture should be:
+
+```text
+ESP32
+ ↓
+Mesh
+ ↓
+Gateway
+ ↓
+Edge PC
+ ↓
+AI + Decision Engine
+```
+
+The laptop/PC is therefore **not necessarily a mesh node**.
+
+It is the monitoring/analysis/control system.
+
+---
+
+# 10. Log Collector
+
+The gateway/PC receives telemetry.
+
+Create a service:
+
+```text
+Log Collector
+```
+
+Responsibilities:
+
+```text
+Receive telemetry
+Validate message
+Timestamp if required
+Store raw event
+Forward to feature pipeline
+```
+
+Example:
+
+```text
+POST /telemetry
+```
+
+or a persistent connection such as WebSocket/MQTT, depending on the final implementation.
+
+The exact transport isn't specified in the source, so Antigravity should keep it configurable.
+
+---
+
+# 11. Database
+
+Store both raw telemetry and security events.
+
+Suggested conceptual schema:
+
+### `nodes`
+
+```text
+id
+node_id
+mac_address
+status
+last_seen
+role
+```
+
+### `telemetry`
+
+```text
+id
+timestamp
+source
+destination
+packet_rate
+packet_loss
+latency
+rssi
+retransmissions
+sequence_number
+duplicate_count
+```
+
+### `security_events`
+
+```text
+id
+timestamp
+event_type
+source_node
+target_node
+confidence
+status
+action_taken
+```
+
+### `routes`
+
+```text
+source
+destination
+path
+active
+```
+
+Don't lock Antigravity to a specific DB unless you've chosen one. SQLite is enough for a prototype; PostgreSQL/MongoDB can be used if the team wants a more scalable backend.
+
+---
+
+# 12. Attack simulation
+
+Member 2 generates controlled attacks **inside the laboratory network**.
+
+The four required attack categories are:
+
+### DoS / flooding
+
+Attacker generates unusually high traffic.
+
+Expected effects can include:
+
+```text
+↑ packet rate
+↑ latency
+↑ packet loss
+↑ retransmissions
+↓ delivery
+```
+
+
+
+### Replay
+
+Previously captured valid messages are retransmitted.
+
+Useful indicator:
+
+```text
+duplicate sequence numbers
+unexpected sequence ordering
+```
+
+The specification specifically identifies sequence-number behaviour as useful for replay detection. 
+
+### Spoofing
+
+A device attempts to appear as another node.
+
+Node identity information becomes relevant.
+
+The specification notes that MAC addresses can be used as an identity-related feature but should **not** be treated as a complete security mechanism. 
+
+### Rogue node
+
+An unauthorized device attempts to participate in the network.
+
+---
+
+# 13. Dataset generation
+
+Member 2 should generate:
+
+```text
+NORMAL
+DOS
+REPLAY
+SPOOFING
+ROGUE_NODE
+```
+
+Each traffic sample should have telemetry features.
+
+Example:
+
+```text
+packet_rate
+packet_loss
+latency
+RSSI
+retransmissions
+sequence_anomaly
+communication_frequency
+node_identity
+label
+```
+
+---
+
+# 14. AI / IDS
+
+Member 3 takes the telemetry and creates the detection model.
+
+Pipeline:
+
+```text
+Raw telemetry
+      ↓
+Cleaning
+      ↓
+Feature extraction
+      ↓
+Feature scaling/encoding
+      ↓
+Train/test split
+      ↓
+ML model
+      ↓
+Prediction
+```
+
+Candidate models from your project plan include:
+
+```text
+Decision Tree
+Random Forest
+SVM
+```
+
+The model should first distinguish:
+
+```text
+NORMAL
+vs
+SUSPICIOUS
+```
+
+and, if sufficient data is available, classify:
+
+```text
+DoS
+Replay
+Spoofing
+Rogue Node
+```
+
+The source specifically says attack-specific classification depends on having sufficient training data. 
+
+---
+
+# 15. Decision Engine
+
+This is extremely important.
+
+**ML detection ≠ final response.**
+
+Suppose:
+
+```text
+AI:
+Node 2 → suspicious
+confidence = 0.94
+```
+
+The decision engine converts that into an action.
+
+Conceptually:
+
+```text
+Telemetry
+   ↓
+ML prediction
+   ↓
+Suspicious?
+   │
+   ├── NO → Continue
+   │
+   └── YES
+        ↓
+   Identify node
+        ↓
+   Generate alert
+        ↓
+   Mark node suspicious
+        ↓
+   Isolate/block
+        ↓
+   Find alternative route
+        ↓
+   Resume communication
+        ↓
+   Log event
+```
+
+That is essentially the project's prescribed system flow. 
+
+---
+
+# 16. Self-healing mechanism
+
+This is the project's second major contribution after IDS.
+
+Suppose:
+
+```text
+N1 → N2 → N3
+```
+
+is currently being used.
+
+Then N2 is identified as compromised.
+
+The system does:
+
+```text
+1. Detect abnormal behaviour
+2. Identify N2
+3. Generate alert
+4. Mark N2 compromised
+5. Isolate N2
+6. Calculate/select alternative path
+7. Route traffic around N2
+8. Continue communication
+9. Record incident
+```
+
+This sequence is explicitly defined in the source. 
+
+---
+
+# 17. Route recovery
+
+Your network needs a route-management component.
+
+Conceptually:
+
+```python
+find_alternative_route(
+    source,
+    destination,
+    blocked_nodes
+)
+```
+
+Example:
+
+```text
+Before:
+
+N1 → N2 → N3
+
+After N2 isolation:
+
+N1 → N4 → N3
+```
+
+The algorithm could use a graph representation:
+
+```text
+Nodes = ESP32 devices
+Edges = available communication links
+```
+
+Then calculate a valid path excluding compromised nodes.
+
+The exact routing implementation depends on the chosen ESP32 networking protocol and therefore should not be falsely hard-coded as an existing feature.
+
+---
+
+# 18. Isolation
+
+The gateway sends a command to the mesh:
+
+```json
+{
+  "command": "ISOLATE",
+  "node": "NODE_02"
+}
+```
+
+The network then prevents that node from participating in normal traffic.
+
+The precise mechanism depends on the chosen networking implementation.
+
+Possible implementation concept:
+
+```text
+Gateway
+   ↓
+Isolation command
+   ↓
+Healthy nodes update blacklist
+   ↓
+Node 2 no longer accepted for forwarding
+   ↓
+Route recalculation
+```
+
+Again, **this is proposed implementation logic**, not something the source claims already exists.
+
+---
+
+# 19. Dashboard
+
+Member 4 builds the interface.
+
+### Main screen
+
+```text
+┌────────────────────────────────────────────┐
+│             SECUREMESH AI                  │
+├────────────────────────────────────────────┤
+│ Network Status: HEALTHY                    │
+│ Active Nodes: 5                            │
+│ Suspicious Nodes: 0                        │
+├────────────────────────────────────────────┤
+│                                            │
+│              NETWORK GRAPH                 │
+│                                            │
+│          N2 ───────── N3                   │
+│         /  \          /                    │
+│       N1────┴────────N4                    │
+│                                            │
+├────────────────────────────────────────────┤
+│ Packet Rate │ Latency │ Loss │ RSSI       │
+├────────────────────────────────────────────┤
+│ Security Events                            │
+└────────────────────────────────────────────┘
+```
+
+The source requires the dashboard to show current nodes, node status, topology, packet statistics, attacks, suspicious node, alerts and recovery status. 
+
+---
+
+# 20. Dashboard during an attack
+
+Normal:
+
+```text
+Network: HEALTHY
+
+N1 ─── N2 ─── N3
+ \             /
+  ───── N4 ───
+```
+
+Attack:
+
+```text
+⚠ ALERT
+
+Attack: DoS
+Affected Node: N2
+Status: Suspicious
+```
+
+After decision:
+
+```text
+N2: ISOLATED
+
+N1     X     N2
+ \           \
+  \           X
+   N4 ───── N3
+
+Recovery: ACTIVE
+Alternative route: N1 → N4 → N3
+```
+
+The dashboard should update in real time if feasible.
+
+---
+
+# 21. Event logging
+
+Every security event should be recorded.
+
+Example:
+
+```json
+{
+  "timestamp": "2026-09-23T20:30:00",
+  "event": "DOS_DETECTED",
+  "node": "NODE_02",
+  "confidence": 0.94,
+  "action": "ISOLATE",
+  "recovery_route": [
+    "NODE_01",
+    "NODE_04",
+    "NODE_03"
+  ]
+}
+```
+
+This gives you an audit/forensic history.
+
+---
+
+# 22. Complete runtime sequence
+
+This is the **single most important thing for Antigravity to understand**.
+
+```text
+START
+  │
+  ▼
+Initialize ESP32 nodes
+  │
+  ▼
+Assign/register node identities
+  │
+  ▼
+Discover neighbours
+  │
+  ▼
+Establish mesh
+  │
+  ▼
+Build routing information
+  │
+  ▼
+Start normal sensor/data communication
+  │
+  ▼
+Collect telemetry
+  │
+  ▼
+Send telemetry to gateway
+  │
+  ▼
+Store raw logs
+  │
+  ▼
+Extract ML features
+  │
+  ▼
+Run IDS
+  │
+  ├──────────── NORMAL ────────────┐
+  │                               │
+  │                               ▼
+  │                        Continue network
+  │                               │
+  │                               │
+  └─────── SUSPICIOUS ────────────┤
+                                  ▼
+                            Identify node
+                                  │
+                                  ▼
+                            Create alert
+                                  │
+                                  ▼
+                           Decision engine
+                                  │
+                                  ▼
+                           Isolate node
+                                  │
+                                  ▼
+                        Find alternate route
+                                  │
+                                  ▼
+                         Resume communication
+                                  │
+                                  ▼
+                            Log incident
+                                  │
+                                  ▼
+                         Continue monitoring
+```
+
+This follows the flowchart in the project document. 
+
+---
+
+# 23. Where the logic lives
+
+This needs to be crystal clear before development.
+
+### ESP32
+
+```text
+LOW-LEVEL LOGIC
+
+Communication
+Packet handling
+Sensor collection
+Node identity
+Neighbour information
+Telemetry
+Execute isolation/recovery commands
+```
+
+### Edge PC / Gateway
+
+```text
+HIGH-LEVEL LOGIC
+
+Log collection
+Feature extraction
+ML inference
+Attack classification
+Decision engine
+Event logging
+Route/recovery control
+Dashboard API
+```
+
+### Browser
+
+```text
+VISUALIZATION
+
+Topology
+Alerts
+Charts
+Node status
+Recovery state
+Historical events
+```
+
+This is consistent with the source's edge-computing architecture. 
+
+---
+
+# 24. Four members' actual interfaces
+
+This is important for parallel development.
+
+### Member 1 → Member 3
+
+Member 1 provides:
+
+```json
+{
+  "timestamp": 123456,
+  "source": "N1",
+  "destination": "N3",
+  "packet_rate": 20,
+  "packet_loss": 0.02,
+  "latency_ms": 35,
+  "rssi": -62,
+  "retransmissions": 1,
+  "sequence": 1042
+}
+```
+
+Member 3 doesn't need to know your ESP32 code.
+
+---
+
+### Member 2 → Member 3
+
+Member 2 provides labelled examples:
+
+```text
+NORMAL
+DOS
+REPLAY
+SPOOFING
+ROGUE
+```
+
+with the same feature format.
+
+---
+
+### Member 3 → Member 4
+
+Member 3 produces:
+
+```json
+{
+  "node": "N2",
+  "prediction": "DOS",
+  "confidence": 0.94,
+  "timestamp": 123456
+}
+```
+
+---
+
+### Member 4 → Member 1
+
+Member 4/decision engine sends:
+
+```json
+{
+  "command": "ISOLATE",
+  "node": "N2"
+}
+```
+
+or recovery-related instructions.
+
+This gives your four members **clean module boundaries**.
+
+---
+
+# 25. Suggested repository structure
+
+Give Antigravity something like this:
+
+```text
+securemesh-ai/
+│
+├── firmware/
+│   ├── common/
+│   │   ├── config/
+│   │   ├── packet/
+│   │   ├── telemetry/
+│   │   └── identity/
+│   │
+│   ├── node/
+│   │   ├── main.cpp
+│   │   ├── mesh/
+│   │   ├── sensors/
+│   │   ├── routing/
+│   │   └── telemetry/
+│   │
+│   ├── gateway/
+│   │   └── ...
+│   │
+│   └── attacker/
+│       └── ...
+│
+├── backend/
+│   ├── api/
+│   ├── telemetry/
+│   ├── logs/
+│   ├── decision-engine/
+│   ├── recovery/
+│   └── database/
+│
+├── ml/
+│   ├── data/
+│   ├── preprocessing/
+│   ├── training/
+│   ├── models/
+│   ├── evaluation/
+│   └── inference/
+│
+├── dashboard/
+│   ├── components/
+│   ├── topology/
+│   ├── alerts/
+│   ├── charts/
+│   └── events/
+│
+├── attack-simulation/
+│   ├── dos/
+│   ├── replay/
+│   ├── spoofing/
+│   └── rogue-node/
+│
+├── docs/
+│   ├── architecture.md
+│   ├── protocol.md
+│   ├── telemetry-schema.md
+│   ├── api.md
+│   └── testing.md
+│
+└── README.md
+```
+
+---
+
+# 26. Development order
+
+**Do not ask Antigravity to build the entire system at once.**
+
+Build in this order:
+
+### Phase 1 — Hardware
+
+```text
+ESP32 → sensor → serial output
+```
+
+### Phase 2 — Two-node communication
+
+```text
+N1 ↔ N2
+```
+
+Prove packets can be exchanged.
+
+### Phase 3 — Four-node network
+
+```text
+N1
+├── N2
+├── N3
+└── N4
+```
+
+### Phase 4 — Multi-path topology
+
+Prove:
+
+```text
+N1 → N2 → N3
+```
+
+and:
+
+```text
+N1 → N4 → N3
+```
+
+### Phase 5 — Telemetry
+
+Start collecting:
+
+```text
+RSSI
+latency
+packet loss
+packet rate
+retransmissions
+sequence numbers
+```
+
+### Phase 6 — Gateway
+
+```text
+ESP32 → Gateway → PC
+```
+
+### Phase 7 — Normal dataset
+
+Collect enough normal network behaviour.
+
+### Phase 8 — Attack dataset
+
+Member 2 introduces controlled attacks.
+
+### Phase 9 — ML
+
+Train and evaluate the models.
+
+### Phase 10 — Real-time inference
+
+```text
+Live telemetry → ML → prediction
+```
+
+### Phase 11 — Decision engine
+
+```text
+prediction → action
+```
+
+### Phase 12 — Isolation
+
+```text
+malicious node → blocked
+```
+
+### Phase 13 — Route recovery
+
+```text
+old route → unavailable
+new route → selected
+```
+
+### Phase 14 — Dashboard
+
+Connect everything.
+
+### Phase 15 — Full demo
+
+```text
+Normal network
+       ↓
+Attack
+       ↓
+Detection
+       ↓
+Alert
+       ↓
+Isolation
+       ↓
+Route recovery
+       ↓
+Communication continues
+       ↓
+Event logged
+```
+
+---
+
+# 27. Your specific role as Member 1
+
+Since **you're Member 1**, your immediate target isn't AI.
+
+Your first deliverable should be:
+
+> **A working 4–5 ESP32 multi-path mesh that generates reliable, structured network telemetry.**
+
+You should eventually be able to demonstrate:
+
+```text
+        N2
+       /  \
+      /    \
+    N1      N3
+      \    /
+       \  /
+        N4
+```
+
+and show:
+
+```text
+N1 → N2 → N3
+```
+
+working.
+
+Then make N2 unavailable and demonstrate:
+
+```text
+N1 → N4 → N3
+```
+
+working.
+
+At the same time, your telemetry should tell the gateway:
+
+```text
+N1 → N2
+RSSI: ...
+Latency: ...
+Packets: ...
+Loss: ...
+Retransmissions: ...
+```
+
+That is the foundation on which **Member 2's attack generation, Member 3's ML, and Member 4's recovery/dashboard** depend.
+
+---
+
+# 28. One important correction before you give this to Antigravity
+
+There are **two different architectural visions** in your existing project material:
+
+The formal EDI specification describes **edge/local-computer AI**: ESP32 nodes remain lightweight and an edge gateway/PC performs heavier inference. 
+
+The separate pitch document describes a more ambitious architecture in which **every node runs a lightweight AI model locally**, with decentralized detection and no cloud round trip. 
+
+**Do not make Antigravity implement both simultaneously.**
+
+For the actual EDI prototype, I would treat the **EDI.txt architecture as the authoritative implementation specification**: lightweight ESP32 nodes + gateway/edge AI. The per-node AI approach can remain a **future/advanced extension** unless your team experimentally demonstrates that it is feasible on your chosen ESP32 setup.
+
+---
+
+## The one-sentence architecture
+
+If you need to explain the whole project to Antigravity or your professor:
+
+> **"SecureMesh AI is a multi-ESP32 wireless mesh in which lightweight IoT nodes exchange data and network telemetry; an edge gateway collects and analyzes that telemetry using an ML-based IDS, identifies suspicious behaviour, triggers node isolation and alternative-route recovery, and exposes the network state and security events through a web dashboard."** 
+
+And for **your Member-1 implementation**, the key pipeline is:
+
+> **ESP32 → Mesh → Routing → Telemetry → Gateway**
+
+Everything else builds on top of that.
