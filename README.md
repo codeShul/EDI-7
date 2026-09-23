@@ -32,19 +32,19 @@ Modern IoT mesh networks are increasingly deployed in critical infrastructure, b
 | [2] | [Placeholder Author, 2024] | Random Forest models can classify IoT attack vectors with 98% accuracy. | Models are rarely integrated with automated radio-level isolation mechanisms. |
 
 ### 2.2 Proposed Solution
-SecureMesh AI is a 4-layer architecture combining an ESP-NOW wireless mesh, a central Edge Gateway PC, an ML-based IDS (Random Forest/SVM), and a WebSerial Command & Control dashboard. It extracts live telemetry from the mesh, classifies malicious traffic in real-time on the Edge PC, and dispatches automated isolation commands back to the microcontrollers to sever links with rogue nodes and dynamically reroute traffic.
+SecureMesh AI is a fully decentralized, 3-layer architecture combining an ESP-NOW wireless mesh, an On-Device ML-based IDS (TinyML Decision Trees), and a WebSerial passive monitoring dashboard. Instead of relying on an external Edge PC to make security decisions, every individual ESP32 runs a highly optimized Machine Learning classifier directly in its firmware. Each node independently extracts live telemetry from its peers, classifies malicious traffic (DoS, Replay, Spoofing) in real-time, and autonomously severs links with rogue nodes to dynamically reroute traffic, achieving true Edge-AI independence.
 
 ### 2.3 Technical Approach
 - **Mesh Protocol**: ESP-NOW (for offline, router-less, ultra-low latency MAC-to-MAC communication).
-- **Gateway Link**: USB WebSerial API (eliminates network lag between the mesh and the dashboard).
-- **AI/ML Engine**: Scikit-Learn in Python (Decision Trees / Random Forest) trained on custom generated attack datasets.
+- **AI/ML Engine**: Scikit-Learn in Python (trained on a PC), then exported to raw C++ using `m2cgen` (Model to C Generator) to run natively on the ESP32 microcontrollers.
+- **Gateway Link**: USB WebSerial API (passively bridges mesh telemetry to the dashboard without acting as a master node).
 - **Visualization**: HTML5/Vanilla JS with SVG canvas for 60fps topology rendering.
 
 ### 2.4 Feasibility
-- **Technical:** High. ESP32s natively support ESP-NOW, and Scikit-learn provides efficient, exportable classification models.
+- **Technical:** High. Decision Trees compiled via `m2cgen` consume $<2\text{ KB}$ of Flash/RAM, fitting easily alongside the ESP-NOW networking stack on the ESP32.
 - **Economic:** Highly affordable; the entire hardware footprint costs under $30.
-- **Operational:** Works completely offline without needing a Wi-Fi router, making it ideal for remote or harsh environments.
-- **Schedule:** Divided into 15 concrete, iterative phases ensuring steady progress from basic P2P links to full ML integration.
+- **Operational:** Works completely offline without needing a Wi-Fi router or an Edge PC to function, making it ideal for remote or harsh environments.
+- **Schedule:** Divided into concrete, iterative phases ensuring steady progress from basic P2P links to full TinyML integration.
 
 ---
 
@@ -101,17 +101,16 @@ The system is highly reusable as a foundational security layer for *any* ESP-NOW
 ### 6.2 Component / Module Description
 | Module | Function | Interacts With |
 |---|---|---|
-| **Layer 1: Hardware Mesh** | Physical ESP-NOW communication & telemetry collection. | Layer 2 |
-| **Layer 2: Edge Gateway** | Bridges radio mesh data to the PC via USB WebSerial. | Layer 1, Layer 4 |
-| **Layer 3: ML Engine** | Normalizes features and predicts attack states. | Layer 2, Layer 4 |
-| **Layer 4: Dashboard** | Renders 10-link topology, packet inspector, and sends C2 commands. | Layer 2, Layer 3 |
+| **Layer 1: Autonomous Mesh Nodes** | Physical ESP-NOW communication & local telemetry calculation. | Layer 2 |
+| **Layer 2: On-Device TinyML IDS** | Embedded C++ Decision Tree running inside *every* node to classify attacks and execute isolation locally. | Layer 1 |
+| **Layer 3: Gateway Bridge & Dashboard** | A single node passively bridges the network state via WebSerial to an HTML5 Dashboard for visual monitoring. | Layer 1 |
 
 ### 6.3 Data Flow
-1. **Nodes** exchange `ApplicationPacket` frames over radio.
-2. **Gateway Node** intercepts frames and formats them as JSON telemetry.
-3. **Gateway** sends JSON over USB WebSerial to the Edge PC / Browser.
-4. **ML Engine** evaluates telemetry against trained models.
-5. **Dashboard** visualizes the threat and/or dispatches an `ISOLATE` control command back down the USB cable to the mesh.
+1. **Nodes** exchange `network_packet` frames over the radio.
+2. **Local Telemetry Engine** inside each receiving node calculates the RSSI, Packet Rate, and Sequence Continuity.
+3. **Local ML Engine** (Decision Tree) evaluates the telemetry. If an attack is detected, the node independently drops the peer.
+4. **Gateway Node** passively overhears the traffic and formats it as JSON telemetry.
+5. **Dashboard** reads the JSON via USB WebSerial to visually animate the 10-link topology and network health.
 
 ---
 
@@ -136,7 +135,7 @@ The system is highly reusable as a foundational security layer for *any* ESP-NOW
 | Technology | Purpose |
 |---|---|
 | **ESP-NOW (C++)** | Protocol for ultra-low latency, routerless IoT communication. |
-| **Python / Scikit-Learn** | Handling complex data ingestion and ML model training. |
+| **Python / m2cgen** | Training the ML models on PC and compiling them into raw C++ for the microcontrollers. |
 | **HTML5 WebSerial API** | Bridging physical hardware directly to the browser UI without a server. |
 
 ### 8.3 Tools
@@ -166,7 +165,6 @@ git clone https://github.com/codeShul/EDI-7.git
 *(Screenshots of the dashboard, ML confusion matrices, and physical hardware setup will be added here post-implementation).*
 
 ## Future Scope
-- Transitioning the ML inference directly onto the ESP32 using TinyML (TensorFlow Lite for Microcontrollers).
 - Scaling the mesh from 5 nodes to 50 nodes.
 - Adding OTA (Over-The-Air) firmware updates via the mesh.
 

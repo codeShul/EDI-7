@@ -33,34 +33,25 @@ An inspection of the workspace (`c:\Camputer\Projects\EDI`) reveals the followin
 
 ---
 
-## 3. Four-Layer Modular Architecture Diagram
+## 3. Decentralized Three-Layer Modular Architecture Diagram
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ LAYER 4 — WEB DASHBOARD (Presentation & Real-Time Observability)                                │
+│ LAYER 3 — WEB DASHBOARD (Passive Presentation & Real-Time Observability)                        │
 │ ├── 10-Link Topology Graph (SVG)    ├── Live Node Status Matrix    ├── Deep Packet Inspector    │
 │ ├── Rolling Telemetry Charts        ├── Security Incident Audit Log ├── Self-Healing Trace Log  │
 └───────────────────────────────────────────────▲─────────────────────────────────────────────────┘
                                                 │ REST API / WebSocket Stream (JSON)
 ┌───────────────────────────────────────────────┴─────────────────────────────────────────────────┐
-│ LAYER 3 — AI & SECURITY DECISION ENGINE (Intelligence & Control)                                │
-│ ├── Feature Extraction & Scaling    ├── ML Classifier (Decision Tree / Random Forest / SVM)     │
-│ ├── Anomaly & Threshold Engine      ├── Decision Engine (Isolate, Reroute, Log, Alert)          │
-│ └── Attack Classification Engine (Normal, DoS Flood, Replay, Identity Spoofing, Rogue Node)     │
+│ LAYER 2 — GATEWAY BRIDGE (Passive Ingestion & PC Serial Link)                                   │
+│ ├── Telemetry Ingestion Receiver    ├── JSON Serializer (USB Serial 115200 baud)                │
 └───────────────────────────────────────────────▲─────────────────────────────────────────────────┘
-                                                │ Internal IPC / Pipeline
-┌────────────────────────────────────────────────┴────────────────────────────────────────────────┐
-│ LAYER 2 — EDGE GATEWAY (Ingestion, Persistence & Coordination)                                  │
-│ ├── Telemetry Ingestion Receiver    ├── SQLite Database (Nodes, Telemetry, SecurityEvents, Route│
-│ ├── Graph Route Manager (NetworkX)  ├── Control Command Dispatcher (ISOLATE, RESTORE)           │
-│ └── Gateway Link Bridge (USB Serial 115200 baud / Wi-Fi UDP Bridge)                            │
-└───────────────────────────────────────────────▲─────────────────────────────────────────────────┘
-                                                │ Physical Gateway Radio Link
+                                                │ Physical Gateway Radio Link (Sniffer)
 ┌───────────────────────────────────────────────┴─────────────────────────────────────────────────┐
-│ LAYER 1 — ESP32 HARDWARE & MESH NETWORK (IoT Nodes & Radio Communication)                       │
+│ LAYER 1 — ESP32 HARDWARE, MESH & TINYML (Autonomous Nodes)                                      │
 │ ├── Node 1 (Booted COM9)  ├── Node 2                 ├── Node 3                                 │
 │ ├── Node 4                ├── Node 5                 ├── ESP-NOW Redundant 10-Link Full Mesh    │
-│ ├── Rolling Telemetry Engine ├── Peer Link Blacklist ├── Autonomous Command Executor           │
+│ ├── Rolling Telemetry Engine ├── Peer Link Blacklist ├── TinyML Decision Tree (Local Execution) │
 └─────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
