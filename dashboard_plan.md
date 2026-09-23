@@ -59,43 +59,39 @@
 
 ---
 
-## 2. How the Dashboard Links to Real ESP32 Data
+## 2. How the Dashboard Links to Real ESP32 Data (WebSerial C2 Architecture)
 
-The live data linking works across a 3-tier pipeline with **$< 5\text{ ms}$ latency**:
+The dashboard operates as a true **Command and Control (C2) Center** using the modern HTML5 WebSerial API. This means zero Python backend, zero external routers, and 100% offline reliability. 
 
 ```text
   ┌─────────────────────────────────────────────────────────────┐
+  │                 WEB BROWSER (Dashboard App)                 │
+  │  1. Receives streaming JSON Telemetry                       │
+  │  2. Renders 10-link SVG graph, packet inspector & logs      │
+  │  3. Sends Attack Commands (e.g., `CMD:ATTACK:DOS:N2`)       │
+  └──────────────────────────┬───────────────────────▲──────────┘
+             [Attack Trigger]│                       │ [JSON Telemetry]
+                             ▼ (USB WebSerial 115200)│
+  ┌──────────────────────────┴───────────────────────┴──────────┐
+  │                 ESP32 EDGE GATEWAY (COM Port)               │
+  │  - Plugs directly into laptop via USB                       │
+  │  - Bridges WebSerial commands to radio broadcasts           │
+  │  - Listens to radio mesh and forwards JSON to PC            │
+  └──────────────────────────┬───────────────────────▲──────────┘
+             [ESP-NOW Broadcast]│                    │ [ESP-NOW Telemetry]
+                                ▼                    │
+  ┌─────────────────────────────┴────────────────────┴──────────┐
   │                 ALL 5 ESP32 NODES (N1 - N5)                 │
-  │  Every node transmits real network frames over ESP-NOW radio│
-  └──────────────────────────────┬──────────────────────────────┘
-                                 │
-                                 ▼ (ESP-NOW Air Packets)
-  ┌─────────────────────────────────────────────────────────────┐
-  │                   ESP32 INGESTION GATEWAY                   │
-  │  - Intercepts radio frames via OnDataRecv() callback        │
-  │  - Serializes C struct to JSON:                             │
-  │    {"src":1,"dst":2,"seq":104,"rate":2.1,"rssi":-52}       │
-  │  - Streams JSON to WebSocket (ws://192.168.4.1/ws)          │
-  │    or USB WebSerial at 115200 baud                          │
-  └──────────────────────────────┬──────────────────────────────┘
-                                 │
-                                 ▼ (WebSocket / WebSerial Stream)
-  ┌─────────────────────────────────────────────────────────────┐
-  │                WEB BROWSER (Dashboard App)                  │
-  │  - socket.onmessage / serialReader.read()                   │
-  │  - Updates SVG 10-link topology, node cards & packet table  │
+  │  - Execute attack commands instantly upon receipt           │
+  │  - Transmit real network frames and metrics continuously    │
   └─────────────────────────────────────────────────────────────┘
 ```
 
-### Two Seamless Connection Modes:
-1. **100% Wireless via ESP32 Wi-Fi Hotspot (No cables or laptops required)**:
-   - An ESP32 creates Wi-Fi Access Point `SecureMesh_AP`.
-   - Open phone, tablet, or PC browser to `http://192.168.4.1`.
-   - Browser connects to WebSocket stream `ws://192.168.4.1/ws` for live updates.
-2. **Direct Browser USB WebSerial**:
-   - Plug any one node into USB.
-   - Open `index.html` in Chrome/Edge and click **"Connect USB"**.
-   - Browser directly reads the live serial JSON stream with zero external servers.
+### Connection Flow:
+1. **Plug in Gateway**: Plug one ESP32 into your laptop via USB.
+2. **Open Dashboard**: Double-click `index.html` in Chrome or Edge.
+3. **Connect**: Click the **"Connect USB"** button on the webpage and select the COM port. 
+4. **Command & Control**: The browser instantly reads the live mesh telemetry for the UI, and the **Demo Control Panel** buttons send serial triggers down the USB cable to execute attacks on the remote nodes.
 
 ---
 
