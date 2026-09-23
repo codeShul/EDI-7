@@ -28,13 +28,15 @@ This plan focuses purely on hardcoded ESP-NOW mesh networking, generating random
 We will define a simple, unified C++ `struct` that all nodes share:
 
 ```cpp
-typedef struct struct_message {
-    uint8_t sender_id;      // 1 to 5
-    uint32_t msg_id;        // Incremental counter
-    float sim_temperature;  // Random value (e.g., 20.0 to 35.0)
-    float sim_humidity;     // Random value (e.g., 40.0 to 80.0)
-    int battery_level;      // Random value (e.g., 0 to 100)
-} struct_message;
+typedef struct network_packet {
+    uint8_t sender_id;      // Hardcoded Node ID (1 to 5)
+    uint8_t target_id;      // Intended recipient Node ID
+    uint32_t seq_num;       // Monotonic sequence number (prevents replays)
+    uint8_t packet_type;    // 0: DATA, 1: HEARTBEAT, 2: ROUTE_SYNC
+    uint8_t ttl;            // Time-to-Live (Hop count limit)
+    uint16_t checksum;      // Data integrity verification
+    uint8_t dummy_payload[16]; // Random bytes simulating real network payload
+} network_packet;
 ```
 
 ---
@@ -48,16 +50,17 @@ typedef struct struct_message {
 ### Step 2: Write Sensor Node Firmware (`sensor_node.ino`)
 - Initialize Wi-Fi in Station mode.
 - Initialize ESP-NOW and register the Gateway's hardcoded MAC address as a peer.
-- In the `loop()`, generate `random(2000, 3500) / 100.0` for temperature.
-- Send the struct via `esp_now_send()`.
-- Add a small `delay()` to control the packet rate.
+- In the `loop()`, increment the `seq_num`, populate `dummy_payload` with random bytes, and calculate the `checksum`.
+- Send the `network_packet` struct via `esp_now_send()`.
+- Add a random `delay()` to generate a realistic, variable packet rate.
 
 ### Step 3: Write Gateway Firmware (`gateway_node.ino`)
 - Initialize Wi-Fi in Station mode.
 - Initialize ESP-NOW and register a receive callback (`OnDataRecv`).
-- When a packet hits the antenna, immediately extract the `sender_id`, `sim_temperature`, etc.
-- Format it into a clean JSON string: 
-  `{"node": 1, "msg_id": 105, "temp": 24.5, "hum": 60.1, "batt": 85, "rssi": -52}`
+- When a packet hits the antenna, instantly extract the `sender_id`, `seq_num`, `packet_type`, etc.
+- Also pull the hardware RSSI (signal strength) from the `esp_now_recv_info` struct.
+- Format everything into a clean JSON string: 
+  `{"src": 1, "dst": 5, "seq": 105, "type": "DATA", "ttl": 4, "rssi": -52}`
 - Print it to the Serial Monitor at `115200` baud.
 
 ### Step 4: Integration
