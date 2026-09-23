@@ -23,9 +23,15 @@ This plan focuses purely on hardcoded ESP-NOW mesh networking, generating random
 
 ---
 
-## 3. Hardcoded Packet Structure
+### 3.1 Intrusion Detection Factors (Telemetry)
+Even though the AI is handled separately, the Gateway must extract and forward specific network features that the AI uses to determine if a node is compromised:
+1. **Packet Transmission Rate**: Spikes indicate a *Denial of Service (DoS) Flood*.
+2. **Sequence Continuity (`seq_num`)**: Out-of-order or duplicate packets indicate a *Replay Attack*.
+3. **Signal Strength Variance (RSSI)**: Sudden jumps in radio signal strength indicate *MAC Spoofing*.
+4. **Packet Drop Rate**: Missing sequence numbers across the mesh indicate a *Rogue / Blackhole Node*.
 
-We will define a simple, unified C++ `struct` that all nodes share:
+### 3.2 Unified Packet Structure
+To support the telemetry factors above, we will define a simple, unified C++ `struct` that all nodes share:
 
 ```cpp
 typedef struct network_packet {
