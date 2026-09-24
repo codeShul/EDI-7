@@ -1,0 +1,64 @@
+{
+  "name": "SecureMesh AI Standard Lab Validation Scenario",
+  "description": "Sequential evaluation of Normal baseline and 4 isolated attack phases",
+  "attacker_id": 4,
+  "phases": [
+    {
+      "mode": "NORMAL",
+      "duration_s": 25,
+      "description": "Baseline normal traffic with all nodes healthy"
+    },
+    {
+      "mode": "DOS",
+      "duration_s": 20,
+      "parameters": {
+        "packet_rate_ms": 10
+      },
+      "description": "High-rate packet flood to saturate mesh radio"
+    },
+    {
+      "mode": "NORMAL",
+      "duration_s": 15,
+      "description": "Recovery to normal baseline traffic"
+    },
+    {
+      "mode": "REPLAY",
+      "duration_s": 20,
+      "parameters": {
+        "repeat_window_s": 5
+      },
+      "description": "Replay injection of stale sequence numbers"
+    },
+    {
+      "mode": "NORMAL",
+      "duration_s": 15,
+      "description": "Recovery to normal baseline traffic"
+    },
+    {
+      "mode": "SPOOFING",
+      "duration_s": 20,
+      "parameters": {
+        "target_node_id": 2
+      },
+      "description": "Source node identity impersonation with divergent RSSI"
+    },
+    {
+      "mode": "NORMAL",
+      "duration_s": 15,
+      "description": "Recovery to normal baseline traffic"
+    },
+    {
+      "mode": "ROGUE_NODE",
+      "duration_s": 20,
+      "parameters": {
+        "unauthorized_id": 99
+      },
+      "description": "Unregistered foreign node transmitting on mesh channel"
+    },
+    {
+      "mode": "NORMAL",
+      "duration_s": 20,
+      "description": "Post-attack stabilization and clean shutdown"
+    }
+  ]
+}

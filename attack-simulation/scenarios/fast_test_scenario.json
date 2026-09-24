@@ -1,0 +1,64 @@
+{
+  "name": "Fast Automated Integration Test Scenario",
+  "description": "Short duration cycles to validate end-to-end dataset generation and state transitions",
+  "attacker_id": 4,
+  "phases": [
+    {
+      "mode": "NORMAL",
+      "duration_s": 4,
+      "description": "Initial normal baseline"
+    },
+    {
+      "mode": "DOS",
+      "duration_s": 5,
+      "parameters": {
+        "packet_rate_ms": 10
+      },
+      "description": "DoS flooding test"
+    },
+    {
+      "mode": "NORMAL",
+      "duration_s": 3,
+      "description": "Inter-attack normal baseline"
+    },
+    {
+      "mode": "REPLAY",
+      "duration_s": 5,
+      "parameters": {
+        "repeat_window_s": 2
+      },
+      "description": "Replay injection test"
+    },
+    {
+      "mode": "NORMAL",
+      "duration_s": 3,
+      "description": "Inter-attack normal baseline"
+    },
+    {
+      "mode": "SPOOFING",
+      "duration_s": 5,
+      "parameters": {
+        "target_node_id": 2
+      },
+      "description": "Spoofing test"
+    },
+    {
+      "mode": "NORMAL",
+      "duration_s": 3,
+      "description": "Inter-attack normal baseline"
+    },
+    {
+      "mode": "ROGUE_NODE",
+      "duration_s": 5,
+      "parameters": {
+        "unauthorized_id": 99
+      },
+      "description": "Rogue node test"
+    },
+    {
+      "mode": "NORMAL",
+      "duration_s": 3,
+      "description": "Post-test baseline stabilization"
+    }
+  ]
+}
