@@ -255,6 +255,12 @@ async def _ingest_loop(app: FastAPI) -> None:
 async def lifespan(app: FastAPI):
     app.state.db = DatabaseEngine(config.DB_PATH)
     await app.state.db.init_db()
+    # Clear the old data so graph and logs start fresh on every boot
+    await app.state.db._conn.execute("DELETE FROM security_events")
+    await app.state.db._conn.execute("DELETE FROM telemetry")
+    await app.state.db._conn.execute("DELETE FROM nodes")
+    await app.state.db._conn.commit()
+
     for node_id in config.NODE_IDS:
         await app.state.db.upsert_node(str(node_id), status="HEALTHY")
 
