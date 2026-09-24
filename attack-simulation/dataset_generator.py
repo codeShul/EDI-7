@@ -211,9 +211,16 @@ class RollingMetricsAggregator:
         }
 
 
-# Node 4 (docs/attacker_node_requirements.md "Autonomous Operation Model") cycles
+# Node 4 (docs/attacker_node_requirements.md "Autonomous Operation Model",
+# attack-simulation/esp32_attacker/esp32_attacker.ino AttackMode enum) cycles
 # through these on its own, starting the instant it boots, with no PC command.
-AUTO_CYCLE = ["DoS", "Replay", "Spoofing", "Blackhole"]
+# The 4th phase is NOT a relay-drop Blackhole (Node 4 is never picked as a
+# next-hop by normal nodes, so it has no relayed traffic to drop) — it skips
+# sequence numbers under its own known ID 4 to simulate missing packets, which
+# is also not the classic "unrecognized ID" Rogue_Node signature (see
+# attack_characteristics.md). It is labeled "Drop_Anomaly" to avoid conflating
+# it with either.
+AUTO_CYCLE = ["DoS", "Replay", "Spoofing", "Drop_Anomaly"]
 DEFAULT_PHASE_DURATION_S = 30.0  # must match ATTACK_PHASE_DURATION_MS in esp32_attacker.ino
 
 
@@ -222,7 +229,7 @@ class AutoCycleGroundTruth:
     broadcast. Node 4 is not commanded from the PC, so there is nothing to read
     a "which attack is active" state from — instead this assumes Node 4 was
     powered on at `power_on_time` and is cycling DoS -> Replay -> Spoofing ->
-    Blackhole -> DoS -> ... forever, `phase_duration_s` each, starting
+    Drop_Anomaly -> DoS -> ... forever, `phase_duration_s` each, starting
     immediately (no idle/Normal gap between phases once it has booted)."""
 
     def __init__(self, power_on_time: float, phase_duration_s: float = DEFAULT_PHASE_DURATION_S,
@@ -579,7 +586,7 @@ def main():
     parser.add_argument("--ipc-file", type=str, default=".ground_truth_state.json",
                          help="Ground truth state file written by attack_controller.py (ignored with --auto-cycle)")
     parser.add_argument("--auto-cycle", action="store_true",
-                         help="Label from Node 4's fixed autonomous schedule (DoS->Replay->Spoofing->Blackhole, "
+                         help="Label from Node 4's fixed autonomous schedule (DoS->Replay->Spoofing->Drop_Anomaly, "
                               "repeating) instead of a controller broadcast. Use this for the current firmware; "
                               "attack_controller.py has nothing to synchronize with since Node 4 is not commanded.")
     parser.add_argument("--power-on-time", type=float, default=None,

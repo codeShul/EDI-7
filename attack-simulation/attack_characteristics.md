@@ -7,7 +7,8 @@ This document specifies the expected network telemetry signatures and statistica
 - `DoS`
 - `Replay`
 - `Spoofing`
-- `Rogue_Node`
+- `Rogue_Node` (legacy controller-driven path only — see section E)
+- `Drop_Anomaly` (produced by the current autonomous Node 4 firmware's 4th cycle phase — see section F)
 
 These characteristics serve as ground-truth engineering reference for **Member 3's ML Pipeline** (feature extraction, normalization, threshold tuning, and model evaluation).
 
@@ -101,21 +102,34 @@ The dataset generator produces continuous rolling telemetry records adhering to 
   - `rssi`: Variable depending on physical proximity of rogue hardware.
   - `packet_loss` / `latency`: Uncoordinated with mesh schedule; may cause routing reject errors.
 - **ML Detection Indicators**: Categorical / binary flag `node_identity_status == 1`; unrecognized categorical feature value for `source_node_id`.
+- **Note**: not produced by the current autonomous Node 4 firmware (its 4th cycle phase is `Drop_Anomaly` below, sent under Node 4's own registered ID, not an unrecognized one). Still relevant via the legacy `attack_controller.py --port ... ROGUE_NODE` path with an `unauthorized_id` parameter, or `--simulate` scenario testing.
+
+---
+
+### F. Sequence-Skip Drop Anomaly (`Drop_Anomaly`)
+- **Behavioral Description**: The 4th phase of Node 4's autonomous cycle (`esp32_attacker/esp32_attacker.ino`, `runRogueNodeMode()` — named for its enum, relabeled here to avoid confusion with section E). Originally specified as a relay-blackhole ("accept packets meant for forwarding, then drop them"), but `firmware/mesh_node/mesh_node.ino` now restricts normal nodes to only route through 1-3, so Node 4 is never selected as a relay hop and has no relayed traffic to drop. The implemented behavior instead sends under Node 4's **own, registered** ID and jumps its sequence counter forward by 10 on every packet, simulating missing packets without ever repeating or going backward.
+- **Key Metric Signatures**:
+  - `drops` / sequence gaps: **Rapid, steady climb** — exactly 9 missing sequence numbers per packet sent (`current_seq_num += 10`), so the gateway's cumulative `drops` counter for this peer rises linearly and quickly.
+  - `packet_rate`: **Moderate and steady** (~10 pps, throttled by a 100ms delay) — not a DoS-level flood.
+  - `rssi`: **Stable**, single physical origin (Node 4's actual location), unlike Spoofing's bimodal signature.
+  - `duplicate_packets`: **0** — this is a forward skip, never a repeat or backward jump (distinguishes it from Replay).
+  - `node_identity_status`: **`0`** — the sender ID (`4`) is a known, registered ID, so this does **not** look like `Rogue_Node` despite the enum name in the firmware.
+- **ML Detection Indicators**: Steady, non-zero rate of sequence gaps (`drops` increasing roughly linearly with packet count) combined with `node_identity_status == 0` and normal/stable `rssi` — the combination that rules out Replay, Spoofing and Rogue_Node.
 
 ---
 
 ## 4. Feature Summary & Correlation Matrix
 
-| Feature | Normal | DoS | Replay | Spoofing | Rogue Node |
-|---|:---:|:---:|:---:|:---:|:---:|
-| `packet_rate` | Low (~2–5) | **Very High (>20)** | Moderate (+20–40%) | Moderate | Variable |
-| `packet_loss` | Low (<3%) | **High (>15%)** | Low–Med (calc jitter) | Low | Low |
-| `latency_ms` | Low (<25ms) | **High (>80ms)** | Normal | Normal | Normal |
-| `rssi` Variance | Very Low ($\pm 2$) | Low | Low | **Very High (>15 jump)** | Normal |
-| `retransmissions` | 0–1 | **High (>5)** | Normal | Normal | Normal |
-| `duplicate_packets` | **0** | Low (0–2) | **Very High (>3)** | Low (0–1) | 0 |
-| $\Delta sequence\_number$ | Strict +1 | Rapid +1 | **$\le 0$ (Backward/Dup)** | Jittery / Clashing | Sequential |
-| `node_identity_status`| **0** | 0 | 0 | 0 | **1 (Suspicious)** |
+| Feature | Normal | DoS | Replay | Spoofing | Rogue Node | Drop Anomaly |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| `packet_rate` | Low (~2–5) | **Very High (>20)** | Moderate (+20–40%) | Moderate | Variable | Moderate (~10) |
+| `packet_loss` | Low (<3%) | **High (>15%)** | Low–Med (calc jitter) | Low | Low | **High, steady climb** |
+| `latency_ms` | Low (<25ms) | **High (>80ms)** | Normal | Normal | Normal | Normal |
+| `rssi` Variance | Very Low ($\pm 2$) | Low | Low | **Very High (>15 jump)** | Normal | Low (single origin) |
+| `retransmissions` | 0–1 | **High (>5)** | Normal | Normal | Normal | Normal |
+| `duplicate_packets` | **0** | Low (0–2) | **Very High (>3)** | Low (0–1) | 0 | **0** |
+| $\Delta sequence\_number$ | Strict +1 | Rapid +1 | **$\le 0$ (Backward/Dup)** | Jittery / Clashing | Sequential | **Always +10 (steady forward skip)** |
+| `node_identity_status`| **0** | 0 | 0 | 0 | **1 (Suspicious)** | 0 |
 
 ---
 

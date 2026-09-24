@@ -21,8 +21,10 @@ Unlike the earlier design, Node 4 is **not commanded from the PC**. There is no 
 1. **On boot**, after ESP-NOW init (register peers exactly like a normal node, per "Required Includes & Setup" below), pick **one random target** from the known mesh MAC table (`mesh_macs[1..3]`, i.e. any of nodes 1, 2 or 3 — never itself). Keep that same target for the whole session; do not re-pick per attack phase.
 2. **Immediately** begin the attack cycle — no waiting, no idle state.
 3. **Cycle through all four attacks automatically**, one after another, looping forever:
-   `DoS -> Replay -> Spoofing -> Blackhole -> DoS -> ...`
-   Each phase runs for a fixed dwell time (`ATTACK_PHASE_DURATION_MS`, suggested default 30000 = 30s) before advancing to the next. There is no gap or "NORMAL" phase between them — Node 4 is always attacking once it has booted.
+   `DoS -> Replay -> Spoofing -> Drop_Anomaly -> DoS -> ...`
+   Each phase runs for a fixed dwell time (`ATTACK_PHASE_DURATION_MS`, 30000 = 30s in the current firmware) before advancing to the next. There is no gap or "NORMAL" phase between them — Node 4 is always attacking once it has booted.
+
+   The 4th phase is **not** the Blackhole described in "Attack Scenarios to Implement" below — see the note under that section for why, and what the current firmware does instead.
 4. The existing serial `STOP` / `STATUS` commands (see `parseJsonCommand`) may still be kept as an optional manual override/debugging aid, but nothing needs to send `{"mode": ...}` to start it — that handshake from `attack_controller.py` is no longer required for Node 4's own state machine.
 
 ### Why this changes the dataset workflow
@@ -69,15 +71,25 @@ You need to implement functions to trigger the following attacks, likely control
 - Send the packet to Node 3 (Gateway).
 - **Expected IDS Trigger:** Node 3 will see a packet claiming to be from Node 1. However, Node 4 is physically located somewhere else, so the `avg_rssi` (signal strength) received will suddenly jump or drop significantly compared to the real Node 1's historical RSSI.
 
-### 4. Blackhole / Selective Forwarding (Rogue Router)
+### 4. Blackhole / Selective Forwarding (Rogue Router) — superseded, see note
+
 **Concept:** Accept packets intended for relaying, but drop them instead.
 **Implementation:**
 - Implement the `OnDataRecv` callback.
 - If a packet is received where `pkt.target_id != NODE_ID` (meaning you are supposed to relay it), **do not** call `esp_now_send` to forward it. Simply drop it.
 - **Expected IDS Trigger:** If Node 1 sends packets to Node 3 via Node 4, Node 3 will never receive them. Node 3's telemetry will show a massive spike in `drops` (missing sequence numbers from Node 1) because the packets disappeared mid-flight.
 
+> **Note (post-"Node 4 excluded from mesh" redesign):** `firmware/mesh_node/mesh_node.ino` now only ever
+> picks a next-hop from nodes 1-3 (`random(1, 4)`), so a normal node will never route through Node 4 —
+> there is no relayed traffic for it to accept-and-drop in the first place. A literal implementation of
+> this section is no longer possible. The current firmware (`esp32_attacker/esp32_attacker.ino`) instead
+> uses this slot to skip sequence numbers under Node 4's own ID (labeled **`Drop_Anomaly`**, not
+> `Rogue_Node` — its sender ID stays `4`, a *known* ID, so it does not produce the `node_identity_status
+> == 1` signature that `attack_characteristics.md` defines for `Rogue_Node`). Treat `Drop_Anomaly` as its
+> own class distinct from both this section and from `Rogue_Node`.
+
 ## Development Workflow
 
-1.  **Create the Firmware:** Finish `attack-simulation/esp32_attacker.ino` implementing these behaviors (the state machine, boot-time target selection, and cycle scheduler are already there — the four `run*Mode()` attack payload functions are still TODO stubs).
-2.  **Flash Node 4:** Upload the firmware to the ESP32 designated as Node 4.
+1.  **Firmware:** `attack-simulation/esp32_attacker/esp32_attacker.ino` implements the state machine, boot-time target selection, cycle scheduler, and all four attack payloads.
+2.  **Flash Node 4:** Open that folder as the sketch in Arduino IDE and upload it to the ESP32 designated as Node 4.
 3.  **Observe:** Power on Nodes 1-3 and the gateway first, then power on Node 4. It attacks immediately, no PC command needed. Watch the Serial Monitor on the Gateway (Node 3) — you should see the telemetry JSON reflecting the anomalous behavior (e.g., massive rate spikes, sequence errors, or RSSI shifts) within one dwell period (30s) of Node 4 powering on.

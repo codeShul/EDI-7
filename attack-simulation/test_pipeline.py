@@ -116,7 +116,7 @@ def run_auto_cycle(root: Path, workdir: Path) -> None:
         if not order_seen or order_seen[-1] != label:
             order_seen.append(label)
 
-    expected_cycle = ["DoS", "Replay", "Spoofing", "Blackhole"]
+    expected_cycle = ["DoS", "Replay", "Spoofing", "Drop_Anomaly"]
     assert order_seen[0] == "DoS", f"[auto-cycle] must start with DoS immediately: {order_seen}"
     # order_seen should be a slice of the repeating cycle (allow wrap-around)
     doubled = expected_cycle * 3
