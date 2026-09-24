@@ -9,9 +9,9 @@ esp_now_peer_info_t peerInfo;
 
 // Callback when data is sent (Core 3.x / IDF 5.x compatible)
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-void OnDataSent(const esp_now_send_cb_info_t *info) {
+void OnDataSent(const wifi_tx_info_t *mac_addr, esp_now_send_status_t status) {
     Serial.print("Last Packet Send Status: ");
-    Serial.println(info->status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
+    Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
 }
 #else
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
