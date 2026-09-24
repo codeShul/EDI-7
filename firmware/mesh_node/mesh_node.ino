@@ -14,13 +14,8 @@ void OnDataSent(const wifi_tx_info_t *mac_addr, esp_now_send_status_t status) {
 #else
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 #endif
-    if (NODE_ID == GATEWAY_ID) {
-        if (status != ESP_NOW_SEND_SUCCESS) {
-            Serial.println("{\"type\": \"DELIVERY_FAIL\", \"msg\": \"Packet sent but not received (Target offline or out of range)\"}");
-        }
-    } else {
-        Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery FAIL (Packet sent but not received)");
-    }
+    const char* result = (status == ESP_NOW_SEND_SUCCESS) ? "SUCCESS" : "FAIL";
+    Serial.printf("{\"type\": \"DELIVERY\", \"node\": %d, \"status\": \"%s\"}\n", NODE_ID, result);
 }
 
 // ---------------------------------------------------------
