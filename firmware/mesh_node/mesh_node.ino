@@ -55,6 +55,8 @@ void OnDataRecv(const uint8_t * mac_addr, const uint8_t *incomingData, int len) 
 void setup() {
     Serial.begin(115200);
     WiFi.mode(WIFI_STA);
+    
+    init_telemetry(); // Clear garbage RAM values for the math engine
 
     if (esp_now_init() != ESP_OK) return;
 
@@ -107,6 +109,12 @@ void loop() {
         
         for(int i = 0; i < 16; i++) pkt.dummy_payload[i] = random(0, 255);
         pkt.checksum = pkt.sender_id + pkt.target_id + pkt.seq_num;
+        
+        // If I am the gateway generating my own packet, print it so the website sees it!
+        if (NODE_ID == GATEWAY_ID) {
+            Serial.printf("{\"src\": %d, \"dst\": %d, \"seq\": %d, \"type\": \"DATA\", \"ttl\": %d, \"rssi\": 0}\n", 
+                          pkt.sender_id, pkt.target_id, pkt.seq_num, pkt.ttl);
+        }
 
         esp_now_send(mesh_macs[next_hop_mac], (uint8_t *) &pkt, sizeof(pkt));
     }

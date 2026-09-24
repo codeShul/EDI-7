@@ -12,7 +12,12 @@ struct PeerTelemetry {
 };
 
 // Global telemetry table (Indexes 1 to 5 correspond to Node IDs)
-PeerTelemetry telemetry_table[6] = {0};
+PeerTelemetry telemetry_table[6];
+
+// Call this in setup() to ensure RAM is cleanly zeroed
+void init_telemetry() {
+    memset(telemetry_table, 0, sizeof(telemetry_table));
+}
 
 // Call this inside OnDataRecv to update the running stats
 void update_telemetry(uint8_t sender_id, uint32_t seq_num, int rssi) {
