@@ -196,7 +196,11 @@ class SimulatedSource(TelemetrySource):
             if self._pending:
                 await asyncio.sleep(0.2)
                 if self._pending:
-                    yield self._emit(self._pending.popleft())
+                    msg = self._pending.popleft()
+                    if msg.get("src") in self._isolated:
+                        msg["action"] = "BLOCKED"
+                        msg["packet_status"] = "BLOCKED"
+                    yield self._emit(msg)
                 continue
 
             now = time.monotonic()
@@ -211,7 +215,11 @@ class SimulatedSource(TelemetrySource):
                     continue
                 attacker, victim = random.choice(list(self._dos.items()))
                 frame = self._new_frame(attacker, victim, "DATA")
-                yield self._emit(self._rx(frame, victim, "CONSUMED", self._next_rssi((attacker, victim))))
+                action = "BLOCKED" if attacker in self._isolated else "CONSUMED"
+                msg = self._rx(frame, victim, action, self._next_rssi((attacker, victim)))
+                if attacker in self._isolated:
+                    msg["packet_status"] = "BLOCKED"
+                yield self._emit(msg)
                 continue
 
             if now < next_normal:
