@@ -20,12 +20,18 @@ typedef struct __attribute__((packed)) network_packet {
 // ---------------------------------------------------------
 // 2. Hardcoded Node Configuration
 // ---------------------------------------------------------
-#define NODE_ID 1              // CHANGE THIS FOR EACH NODE (1-4 for sensors, 5 for gateway)
-#define GATEWAY_ID 5
+#define NODE_ID 1              // CHANGE THIS FOR EACH BOARD YOU FLASH (1, 2, or 3)
+#define GATEWAY_ID 3           // Let's use Node 3 as the Gateway for now since we have 3 MACs
 
-// For Phase 1, we use the Broadcast MAC address so nodes can find each other 
-// without needing hardcoded physical MACs immediately. 
-// In Phase 2, we will replace this with the exact MAC arrays.
-const uint8_t broadcast_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+// Array of known MAC addresses in the mesh (Index corresponds to NODE_ID)
+// Index 0 is empty. Index 1 = ESP 1, Index 2 = ESP 2, etc.
+const uint8_t mesh_macs[6][6] = {
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // Node 0 (Null)
+    {0x68, 0x09, 0x47, 0x86, 0x31, 0xD0}, // Node 1 (ESP 1)
+    {0x1C, 0xC3, 0xAB, 0xB3, 0xC4, 0xA8}, // Node 2 (ESP 2)
+    {0x8C, 0x94, 0xDF, 0x7C, 0xCC, 0x84}, // Node 3 (ESP 3 - Acting as Gateway)
+    {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, // Node 4 (Placeholder)
+    {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}  // Node 5 (Placeholder)
+};
 
 #endif // MESH_CONFIG_H

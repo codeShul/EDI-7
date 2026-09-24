@@ -39,8 +39,8 @@ void setup() {
         esp_now_register_send_cb(OnDataSent);
     #endif
     
-    // Register peer (Gateway / Broadcast)
-    memcpy(peerInfo.peer_addr, broadcast_mac, 6);
+    // Register peer (Gateway) using precise MAC address
+    memcpy(peerInfo.peer_addr, mesh_macs[GATEWAY_ID], 6);
     peerInfo.channel = 0;  
     peerInfo.encrypt = false;
     
@@ -49,7 +49,7 @@ void setup() {
         return;
     }
     
-    Serial.println("Sensor Node Initialized. Sending data...");
+    Serial.println("Sensor Node Initialized. Sending data to Gateway...");
 }
 
 void loop() {
@@ -68,8 +68,8 @@ void loop() {
     // Simple mock checksum (Sum of bytes)
     pkt.checksum = pkt.sender_id + pkt.target_id + pkt.seq_num;
 
-    // Send message via ESP-NOW
-    esp_err_t result = esp_now_send(broadcast_mac, (uint8_t *) &pkt, sizeof(pkt));
+    // Send message directly to Gateway MAC via ESP-NOW
+    esp_err_t result = esp_now_send(mesh_macs[GATEWAY_ID], (uint8_t *) &pkt, sizeof(pkt));
    
     if (result == ESP_OK) {
         Serial.printf("Sent packet Seq: %d\n", pkt.seq_num);
