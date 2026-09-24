@@ -86,14 +86,15 @@ async def _handle_blocked(app: FastAPI, packet: dict, src: int, dst: int) -> dic
     counts = app.state.blocked_counts
     counts[src] = counts.get(src, 0) + 1
     now = time.time()
+    rssi = packet.get("rssi") or None  # 0 means "no reception" (gateway-originated packet)
     dropped = {
         "timestamp": now,
         "source": str(src),
         "destination": str(dst),
         "packet_rate": 0.0,
-        "packet_loss": 0.0,
-        "rssi": packet.get("rssi"),
-        "rssi_instant": packet.get("rssi"),
+        "packet_loss": None,
+        "rssi": rssi,
+        "rssi_instant": rssi,
         "sequence_number": packet.get("seq"),
         "type": packet.get("type", "DATA"),
         "ttl": packet.get("ttl"),
@@ -180,6 +181,7 @@ async def lifespan(app: FastAPI):
         dos_threshold=config.DOS_PACKET_RATE_THRESHOLD,
         rssi_jump_dbm=config.RSSI_SPOOF_JUMP_DBM,
         known_nodes=set(config.NODE_IDS),
+        replay_dup_threshold=config.REPLAY_DUPLICATE_THRESHOLD,
     )
     app.state.aggregator = PacketAggregator(config.TELEMETRY_WINDOW_SECONDS)
     app.state.source = get_source()

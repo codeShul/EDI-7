@@ -51,7 +51,7 @@ class SimulatedSource(TelemetrySource):
     def __init__(self, node_ids: list[int]):
         self.node_ids = node_ids
         self.enabled = True
-        self._seq: dict[tuple[int, int], int] = {}
+        self._seq: dict[int, int] = {}
         self._rssi: dict[tuple[int, int], float] = {}
         self._isolated: set[int] = set()
         self._dos: dict[int, int] = {}          # attacker -> victim, flooding until reset
@@ -70,15 +70,16 @@ class SimulatedSource(TelemetrySource):
         return round(current)
 
     def _packet(self, src: int, dst: int, ptype: str | None = None) -> dict:
-        key = (src, dst)
-        self._seq[key] = self._seq.get(key, 0) + 1
+        # Like the firmware, one sequence counter per sending node (shared by
+        # all destinations); only the RSSI baseline is per link.
+        self._seq[src] = self._seq.get(src, 0) + 1
         return {
             "src": src,
             "dst": dst,
-            "seq": self._seq[key],
+            "seq": self._seq[src],
             "type": ptype or random.choice(PACKET_TYPES),
             "ttl": random.randint(2, 4),
-            "rssi": self._next_rssi(key),
+            "rssi": self._next_rssi((src, dst)),
         }
 
     # ---- attack injection ---------------------------------------------------
@@ -95,8 +96,8 @@ class SimulatedSource(TelemetrySource):
         if attack == "REPLAY":
             frame = self._packet(node, peer, "DATA")
             self._pending.append(frame)
-            for _ in range(3):
-                self._pending.append(dict(frame))  # same frame, same sequence number
+            for _ in range(4):
+                self._pending.append(dict(frame))  # exact copies: same sequence number and TTL
             return f"Replay of frame #{frame['seq']} from N{node} to N{peer}"
 
         if attack == "SPOOFING":

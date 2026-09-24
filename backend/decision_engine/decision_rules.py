@@ -22,10 +22,12 @@ class Verdict:
 
 
 class DecisionEngine:
-    def __init__(self, dos_threshold: float, rssi_jump_dbm: float, known_nodes: set[int]):
+    def __init__(self, dos_threshold: float, rssi_jump_dbm: float, known_nodes: set[int],
+                 replay_dup_threshold: int = 3):
         self.dos_threshold = dos_threshold
         self.rssi_jump_dbm = rssi_jump_dbm
         self.known_nodes = known_nodes
+        self.replay_dup_threshold = replay_dup_threshold
         self._rssi_baseline: dict[str, float] = {}
 
     def evaluate(self, telemetry: dict) -> Optional[Verdict]:
@@ -44,13 +46,14 @@ class DecisionEngine:
                             f"Packet rate {telemetry['packet_rate']:.1f} pkts/s exceeds "
                             f"{self.dos_threshold:.0f} pkts/s threshold")
 
-        if telemetry.get("duplicate_count", 0) > 0:
+        # A lone repeated frame is normal on a real radio (ESP-NOW retries after a
+        # lost ACK), so replay needs several exact repeats inside the window.
+        # Sequence gaps are deliberately not a replay signal: they indicate loss.
+        duplicates = telemetry.get("duplicate_count", 0)
+        if duplicates >= self.replay_dup_threshold:
             return Verdict(source, "REPLAY", 0.9,
-                            f"{telemetry['duplicate_count']} duplicate sequence number(s) "
-                            f"detected in the current window")
-
-        if telemetry.get("sequence_anomalies", 0) > 2:
-            return Verdict(source, "REPLAY", 0.6, "Repeated out-of-order sequence numbers")
+                            f"{duplicates} repeated frames (same sequence number and TTL) "
+                            f"in the current window")
 
         # Baseline RSSI per *link* (source+destination), not per source node:
         # a node's signal strength naturally differs across its several peers,
