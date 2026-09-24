@@ -143,7 +143,8 @@ class SimulatedSource(TelemetrySource):
 
     # ---- attack injection -----------------------------------------------------
     def start_attack(self, attack: str, node: int) -> str:
-        peers = [n for n in self.node_ids if n != node and n not in self._isolated]
+        # Exclude Node 5 (offline) and the attacker itself
+        peers = [n for n in self.node_ids if n != node and n != 5 and n not in self._isolated]
         if not peers:
             raise ValueError("No reachable peers to attack")
         peer = random.choice(peers)
