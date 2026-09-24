@@ -214,3 +214,6 @@ tr.empty td { text-align: center; color: var(--muted); font-family: var(--font-s
   .badge[data-state="good"] .dot { animation: none; }
   #topology .link, #topology .node circle { transition: none; }
 }
+
+#topology .node.offline circle { stroke: var(--muted); stroke-dasharray: 2 2; }
+

@@ -74,7 +74,17 @@ async def get_status(request: Request):
 
 @router.get("/nodes")
 async def get_nodes(request: Request):
-    return await request.app.state.db.get_nodes()
+    nodes = await request.app.state.db.get_nodes()
+    import time
+    now = time.time()
+    for n in nodes:
+        node_id = str(n["node_id"])
+        # If node hasn't been touched in 15 seconds, and isn't isolated, mark it OFFLINE
+        if node_id not in request.app.state.node_touch and n["status"] == "HEALTHY":
+            n["status"] = "OFFLINE"
+        elif node_id in request.app.state.node_touch and (now - request.app.state.node_touch[node_id] > 15) and n["status"] == "HEALTHY":
+            n["status"] = "OFFLINE"
+    return nodes
 
 
 @router.get("/topology")
