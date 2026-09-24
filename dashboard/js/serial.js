@@ -9,7 +9,7 @@ var SerialBridge = (function () {
   var BAUD = 115200;
   var MAX_QUEUE = 500;
 
-  var port = null, reader = null, closedPromise = null;
+  var port = null, reader = null, writer = null, closedPromise = null;
   var running = false, draining = false, queue = [];
   var callbacks = { onChange: function () {}, onMessage: function () {} };
 
@@ -49,8 +49,9 @@ var SerialBridge = (function () {
     queue = [];
     try { if (reader) await reader.cancel(); } catch (e) {}
     try { if (closedPromise) await closedPromise; } catch (e) {}
+    try { if (writer) writer.releaseLock(); } catch (e) {}
     try { if (port) await port.close(); } catch (e) {}
-    port = reader = closedPromise = null;
+    port = reader = writer = closedPromise = null;
     try { await post("/api/simulate/enabled", { enabled: true }); } catch (e) {}
     callbacks.onChange(false);
   }
@@ -70,6 +71,7 @@ var SerialBridge = (function () {
     }
 
     running = true;
+    try { writer = port.writable.getWriter(); } catch (e) { writer = null; }  // for send()
     try { await post("/api/simulate/enabled", { enabled: false }); } catch (e) {}
     callbacks.onChange(true);
 
@@ -96,6 +98,19 @@ var SerialBridge = (function () {
     }
   }
 
+  /* Send one command line to the gateway (docs/integration_steps.md, Phase D:
+   * e.g. "ISOLATE_NODE_4"). Resolves false when no gateway is connected. */
+  async function send(text) {
+    if (!running || !writer) return false;
+    try {
+      await writer.write(new TextEncoder().encode(text + "\n"));
+      return true;
+    } catch (e) {
+      callbacks.onMessage("Could not write to the gateway: " + e.message, "error");
+      return false;
+    }
+  }
+
   function disconnect() {
     running = false;
     if (reader) reader.cancel().catch(function () {});
@@ -105,5 +120,5 @@ var SerialBridge = (function () {
     callbacks = cb;
   }
 
-  return { init: init, supported: supported, isConnected: isConnected, connect: connect, disconnect: disconnect };
+  return { init: init, supported: supported, isConnected: isConnected, connect: connect, disconnect: disconnect, send: send };
 })();

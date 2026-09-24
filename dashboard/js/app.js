@@ -230,6 +230,7 @@
         if (msg.data.event_type === "SIM_RESET") {
           Object.keys(perNode).forEach(function (id) { perNode[id].blocked = 0; });
         }
+        if (msg.data.event_type === "ATTACK_DETECTED") flashAlert();
         scheduleRefresh();
       } else if (msg.type === "topology") {
         scheduleRefresh();
@@ -243,6 +244,14 @@
       setTimeout(connectWebSocket, 2000);
     };
     ws.onerror = function () { ws.close(); };
+  }
+
+  var flashTimer = null;
+  function flashAlert() {
+    var el = $("alertFlash");
+    el.classList.add("on");
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(function () { el.classList.remove("on"); }, 900);
   }
 
   function setWsBadge(up) {
@@ -282,8 +291,15 @@
       runAction(function () { return post("/api/simulate/reset"); }, function () { return "All attacks stopped, every node restored."; });
     });
     $("btnIsolate").addEventListener("click", function () {
-      runAction(function () { return post("/api/control/isolate", { node_id: targetNode() }); },
-        function () { return "N" + targetNode() + " isolated."; });
+      var id = targetNode();
+      runAction(async function () {
+        var result = await post("/api/control/isolate", { node_id: id });
+        // With a gateway on USB, also tell the mesh (Phase D of docs/integration_steps.md).
+        result.commandSent = await SerialBridge.send("ISOLATE_NODE_" + id);
+        return result;
+      }, function (r) {
+        return "N" + id + " isolated." + (r.commandSent ? " ISOLATE_NODE_" + id + " sent to the gateway." : "");
+      });
     });
     $("btnRestore").addEventListener("click", function () {
       runAction(function () { return post("/api/control/restore", { node_id: targetNode() }); },

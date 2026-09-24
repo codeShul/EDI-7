@@ -202,7 +202,15 @@ tr.empty td { text-align: center; color: var(--muted); font-family: var(--font-s
 .ctrl-msg.error { color: var(--critical-text); }
 .ctrl-msg.ok { color: var(--good-text); }
 
+/* red frame flashed when an attack is detected */
+#alertFlash {
+  position: fixed; inset: 0; z-index: 50; pointer-events: none;
+  border: 6px solid var(--critical); opacity: 0; transition: opacity .6s ease-out;
+}
+#alertFlash.on { opacity: 1; transition: none; }
+
 @media (prefers-reduced-motion: reduce) {
+  #alertFlash { transition: none; }
   .badge[data-state="good"] .dot { animation: none; }
   #topology .link, #topology .node circle { transition: none; }
 }
