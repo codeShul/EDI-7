@@ -3,68 +3,138 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SecureMesh AI — Dashboard (Draft)</title>
+<title>SecureMesh AI — Mesh Monitor</title>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-<header>
-  <h1>SecureMesh AI</h1>
-  <p>5-node ESP32 mesh — draft monitoring dashboard</p>
-</header>
+<div class="app">
 
-<section>
-  <h2>Network Status</h2>
-  <ul id="statusSummary" class="summary-list">
-    <li>Network status: <strong id="netStatus">-</strong></li>
-    <li>Active nodes: <strong id="activeNodes">-</strong></li>
-    <li>Suspicious nodes: <strong id="suspiciousNodes">-</strong></li>
-    <li>Isolated nodes: <strong id="isolatedNodes">-</strong></li>
-    <li>Active links: <strong id="activeLinks">-</strong></li>
-  </ul>
-</section>
+  <header class="topbar">
+    <div class="brand">
+      <h1>SecureMesh AI</h1>
+      <p>5-node / 10-link ESP-NOW mesh monitor</p>
+    </div>
+    <div class="conn">
+      <span class="badge" id="modeBadge" data-state="neutral">Mode: …</span>
+      <span class="badge" id="wsBadge" data-state="warn"><span class="dot"></span><span id="wsText">Connecting…</span></span>
+      <button id="btnSerial" type="button" title="Read a gateway ESP32 over USB and feed it to the backend">Connect USB (WebSerial)</button>
+    </div>
+  </header>
 
-<section>
-  <h2>Nodes</h2>
-  <table id="nodesTable">
-    <thead><tr><th>Node</th><th>Status</th><th>Last Seen</th></tr></thead>
-    <tbody></tbody>
-  </table>
-</section>
+  <section class="statusbar" aria-label="Network summary">
+    <div class="stat"><span class="stat-label">Network</span><span class="stat-value" id="statNetwork">…</span></div>
+    <div class="stat"><span class="stat-label">Active links</span><span class="stat-value" id="statLinks">–</span></div>
+    <div class="stat"><span class="stat-label">Net rate</span><span class="stat-value" id="statRate">–</span></div>
+    <div class="stat"><span class="stat-label">Security alerts</span><span class="stat-value" id="statAlerts">–</span></div>
+  </section>
 
-<section>
-  <h2>Routes (Topology)</h2>
-  <table id="routesTable">
-    <thead><tr><th>Source</th><th>Destination</th><th>Path</th><th>Status</th></tr></thead>
-    <tbody></tbody>
-  </table>
-</section>
+  <div class="grid-top">
+    <section class="panel">
+      <h2>Mesh topology <span class="hint">click a node to focus its links</span></h2>
+      <div class="topo-wrap">
+        <svg id="topology" viewBox="0 0 400 400" role="img" aria-label="Mesh topology: five nodes and their ten links"></svg>
+        <ul class="legend">
+          <li><span class="swatch line active"></span>Active link</li>
+          <li><span class="swatch line degraded"></span>Degraded link</li>
+          <li><span class="swatch line severed"></span>Severed link (dashed)</li>
+          <li><span class="swatch pulse ok"></span>Packet (in order)</li>
+          <li><span class="swatch pulse warn"></span>Duplicate / gap</li>
+          <li><span class="swatch pulse blocked"></span>Blocked at gateway</li>
+        </ul>
+      </div>
+    </section>
 
-<section>
-  <h2>Live Telemetry</h2>
-  <table id="telemetryTable">
-    <thead><tr><th>Time</th><th>Source</th><th>Destination</th><th>Rate</th><th>Loss %</th><th>RSSI</th><th>Seq</th></tr></thead>
-    <tbody></tbody>
-  </table>
-</section>
-
-<section>
-  <h2>Security Events</h2>
-  <table id="eventsTable">
-    <thead><tr><th>Time</th><th>Node</th><th>Attack</th><th>Confidence</th><th>Action</th><th>Status</th></tr></thead>
-    <tbody></tbody>
-  </table>
-</section>
-
-<section>
-  <h2>Manual Control</h2>
-  <div class="controls">
-    <label for="nodeIdInput">Node ID</label>
-    <input type="number" id="nodeIdInput" min="1" max="5" value="2">
-    <button id="btnIsolate">Isolate</button>
-    <button id="btnRestore">Restore</button>
+    <section class="panel">
+      <h2>Node telemetry <span class="hint">live, last 3 s</span></h2>
+      <div class="table-wrap">
+        <table id="nodeMatrix">
+          <thead><tr><th>Node</th><th>Status</th><th>Rate</th><th>RSSI</th><th>Pkts Tx</th><th>Blocked</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
   </div>
-</section>
 
+  <section class="panel">
+    <h2>Live packet stream &amp; inspector <span class="hint" id="pktCount">0 buffered</span></h2>
+    <div class="toolbar">
+      <button id="pktPause" type="button">Pause</button>
+      <button id="pktClear" type="button">Clear</button>
+      <span class="hint">click a row to inspect it</span>
+    </div>
+    <div class="table-wrap packets">
+      <table>
+        <thead>
+          <tr><th>#</th><th>Time</th><th>Source</th><th>Target</th><th>Type</th><th>TTL</th><th>RSSI</th><th>Seq</th><th>Status</th></tr>
+        </thead>
+        <tbody id="pktBody"></tbody>
+      </table>
+    </div>
+    <div class="inspector" id="pktDetail" hidden>
+      <div>
+        <h3>Hex dump</h3>
+        <pre id="inspHex"></pre>
+        <p class="note" id="inspNote"></p>
+      </div>
+      <div>
+        <h3>Raw JSON</h3>
+        <pre id="inspJson"></pre>
+      </div>
+      <div>
+        <h3>Sequence analysis</h3>
+        <p class="seq-note" id="inspSeq"></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Incident &amp; system log</h2>
+    <div class="tabs" role="tablist" aria-label="Log categories">
+      <button type="button" role="tab" class="tab active" data-tab="security" aria-selected="true">Security alerts <span class="count" id="cntSecurity">0</span></button>
+      <button type="button" role="tab" class="tab" data-tab="healing" aria-selected="false">Self-healing &amp; routing <span class="count" id="cntHealing">0</span></button>
+      <button type="button" role="tab" class="tab" data-tab="system" aria-selected="false">System events <span class="count" id="cntSystem">0</span></button>
+    </div>
+    <div class="toolbar">
+      <input type="search" id="logSearch" placeholder="Search logs…" aria-label="Search logs">
+      <span class="spacer"></span>
+      <button id="logCsv" type="button">Download CSV</button>
+      <button id="logJson" type="button">Download JSON</button>
+    </div>
+    <div class="table-wrap logs">
+      <table>
+        <thead><tr><th>Time</th><th>Level</th><th>Source</th><th>Message / rule violation</th><th>Action</th></tr></thead>
+        <tbody id="logBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Demo controls</h2>
+    <div class="control-row">
+      <label for="targetNode">Target node</label>
+      <select id="targetNode"></select>
+    </div>
+    <div class="control-row">
+      <span class="group-label">Attack simulation</span>
+      <button type="button" class="attack" data-attack="DOS">DoS flood</button>
+      <button type="button" class="attack" data-attack="REPLAY">Replay attack</button>
+      <button type="button" class="attack" data-attack="SPOOFING">RSSI spoofing</button>
+      <button type="button" id="btnReset" class="primary">Reset all</button>
+    </div>
+    <div class="control-row">
+      <span class="group-label">Manual isolation</span>
+      <button type="button" id="btnIsolate">Isolate node</button>
+      <button type="button" id="btnRestore">Restore node</button>
+    </div>
+    <p class="ctrl-msg" id="ctrlMsg" role="status"></p>
+  </section>
+
+</div>
+
+<script src="js/topology.js"></script>
+<script src="js/packet_inspector.js"></script>
+<script src="js/logs.js"></script>
+<script src="js/serial.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

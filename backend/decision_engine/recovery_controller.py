@@ -30,6 +30,8 @@ class RecoveryController:
 
     def restore(self, node_id: int) -> None:
         self.isolated.discard(node_id)
+        if not self._base_graph.has_node(node_id):
+            return  # e.g. an unregistered (rogue) node that was blocked but never part of the mesh
         if not self.graph.has_node(node_id):
             self.graph.add_node(node_id)
             for neighbor in self._base_graph.neighbors(node_id):

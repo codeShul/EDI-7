@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS security_events (
     confidence REAL,
     action TEXT,
     recovery_route TEXT,
-    status TEXT NOT NULL DEFAULT 'OPEN'
+    status TEXT NOT NULL DEFAULT 'OPEN',
+    detail TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON security_events(timestamp);

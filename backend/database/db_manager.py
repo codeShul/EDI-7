@@ -19,7 +19,15 @@ class DatabaseEngine:
     async def init_db(self) -> None:
         self._conn = await aiosqlite.connect(self.db_path)
         self._conn.row_factory = aiosqlite.Row
+        # WAL + NORMAL keeps per-packet commits cheap so a packet flood is not
+        # throttled by fsyncs before the decision engine can see it.
+        await self._conn.execute("PRAGMA journal_mode=WAL")
+        await self._conn.execute("PRAGMA synchronous=NORMAL")
         await self._conn.executescript(SCHEMA_PATH.read_text())
+        cur = await self._conn.execute("PRAGMA table_info(security_events)")
+        columns = {row["name"] for row in await cur.fetchall()}
+        if "detail" not in columns:  # database created before the column existed
+            await self._conn.execute("ALTER TABLE security_events ADD COLUMN detail TEXT")
         await self._conn.commit()
 
     async def close(self) -> None:
@@ -50,6 +58,10 @@ class DatabaseEngine:
         await self._conn.execute("UPDATE nodes SET status = ? WHERE node_id = ?", (status, node_id))
         await self._conn.commit()
 
+    async def set_all_nodes_status(self, status: str) -> None:
+        await self._conn.execute("UPDATE nodes SET status = ?", (status,))
+        await self._conn.commit()
+
     async def get_nodes(self) -> list[dict]:
         cur = await self._conn.execute(
             "SELECT node_id, mac_address, status, last_seen FROM nodes ORDER BY CAST(node_id AS INTEGER)"
@@ -74,11 +86,13 @@ class DatabaseEngine:
 
     # ---- security events -------------------------------------------------
     async def insert_security_event(self, event: dict) -> int:
+        event = {"detail": None, **event}
         cur = await self._conn.execute(
             """INSERT INTO security_events
-               (timestamp, event_type, node_id, attack_type, confidence, action, recovery_route, status)
+               (timestamp, event_type, node_id, attack_type, confidence, action,
+                recovery_route, status, detail)
                VALUES (:timestamp, :event_type, :node_id, :attack_type, :confidence,
-                       :action, :recovery_route, :status)""",
+                       :action, :recovery_route, :status, :detail)""",
             event,
         )
         await self._conn.commit()

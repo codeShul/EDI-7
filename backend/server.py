@@ -11,6 +11,7 @@ from the repository root (with the `backend/` requirements installed).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -35,66 +36,134 @@ logger = logging.getLogger("securemesh.server")
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DASHBOARD_DIR = REPO_ROOT / "dashboard"
 
+BLOCKED_BROADCAST_INTERVAL = 0.25  # seconds; a flood is counted in full but only sampled to the UI
+
+
+async def record_event(app: FastAPI, event_type: str, node_id, *, attack_type: Optional[str] = None,
+                        confidence: Optional[float] = None, action: Optional[str] = None,
+                        recovery_route: Optional[str] = None, status: str = "RESOLVED",
+                        detail: Optional[str] = None) -> int:
+    """Persist a security/incident event and tell every dashboard client."""
+    timestamp = time.time()
+    event_id = await app.state.db.insert_security_event({
+        "timestamp": timestamp,
+        "event_type": event_type,
+        "node_id": str(node_id),
+        "attack_type": attack_type,
+        "confidence": confidence,
+        "action": action,
+        "recovery_route": recovery_route,
+        "status": status,
+        "detail": detail,
+    })
+    await manager.broadcast({
+        "type": "security_event",
+        "data": {
+            "id": event_id, "timestamp": timestamp, "event_type": event_type,
+            "node_id": str(node_id), "attack_type": attack_type, "confidence": confidence,
+            "action": action, "detail": detail,
+        },
+    })
+    return event_id
+
+
+def sync_source(app: FastAPI) -> None:
+    app.state.source.set_isolated(app.state.recovery.isolated)
+
+
+async def _touch_node(app: FastAPI, node_id: str) -> None:
+    # last_seen only needs ~1s resolution; writing it on every packet would
+    # double the commit rate during a flood for no benefit.
+    now = time.time()
+    if now - app.state.node_touch.get(node_id, 0.0) >= 1.0:
+        app.state.node_touch[node_id] = now
+        await app.state.db.upsert_node(node_id)
+
+
+async def _handle_blocked(app: FastAPI, packet: dict, src: int, dst: int) -> dict:
+    """Traffic from/to an isolated node is dropped at the gateway. It is still
+    counted and (sampled) shown so the dashboard can display the block."""
+    counts = app.state.blocked_counts
+    counts[src] = counts.get(src, 0) + 1
+    now = time.time()
+    dropped = {
+        "timestamp": now,
+        "source": str(src),
+        "destination": str(dst),
+        "packet_rate": 0.0,
+        "packet_loss": 0.0,
+        "rssi": packet.get("rssi"),
+        "rssi_instant": packet.get("rssi"),
+        "sequence_number": packet.get("seq"),
+        "type": packet.get("type", "DATA"),
+        "ttl": packet.get("ttl"),
+        "checksum": packet.get("checksum"),
+        "payload": packet.get("payload"),
+        "packet_status": "BLOCKED",
+        "blocked_total": counts[src],
+    }
+    if now - app.state.blocked_last_emit.get(src, 0.0) >= BLOCKED_BROADCAST_INTERVAL:
+        app.state.blocked_last_emit[src] = now
+        await manager.broadcast({"type": "telemetry", "data": dropped})
+    return dropped
+
 
 async def handle_packet(app: FastAPI, packet: dict) -> Optional[dict]:
     """Single entry point for every raw mesh packet, whether it arrives via
     the background serial/simulated feed or the HTTP `/api/telemetry` route:
     aggregate -> persist -> broadcast -> evaluate -> isolate + log on attack."""
+    try:
+        src, dst = int(packet["src"]), int(packet["dst"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    recovery = app.state.recovery
+    if src in recovery.isolated or dst in recovery.isolated:
+        return await _handle_blocked(app, packet, src, dst)
+
     telemetry = app.state.aggregator.ingest(packet)
     if telemetry is None:
         return None
 
     await app.state.db.insert_telemetry(telemetry)
-    await app.state.db.upsert_node(telemetry["source"])
+    await _touch_node(app, telemetry["source"])
     await manager.broadcast({"type": "telemetry", "data": telemetry})
 
     verdict = app.state.decision_engine.evaluate(telemetry)
     if verdict is not None:
         node_id = int(verdict.node_id)
-        app.state.recovery.isolate(node_id)
+        recovery.isolate(node_id)
+        sync_source(app)
         await app.state.db.set_node_status(verdict.node_id, "ISOLATED")
 
-        affected_routes = [r for r in app.state.recovery.all_routes()
-                            if node_id in (r["source"], r["destination"])]
-
-        event_id = await app.state.db.insert_security_event({
-            "timestamp": time.time(),
-            "event_type": "ATTACK_DETECTED",
-            "node_id": verdict.node_id,
-            "attack_type": verdict.attack_type,
-            "confidence": verdict.confidence,
-            "action": "ISOLATE",
-            "recovery_route": str(affected_routes),
-            "status": "OPEN",
-        })
+        event_id = await record_event(
+            app, "ATTACK_DETECTED", verdict.node_id,
+            attack_type=verdict.attack_type, confidence=verdict.confidence,
+            action="ISOLATE", recovery_route=json.dumps(recovery.status()),
+            status="OPEN", detail=verdict.detail,
+        )
         logger.warning("Security event #%s: %s on node %s (%s)",
                         event_id, verdict.attack_type, verdict.node_id, verdict.detail)
-
-        await manager.broadcast({
-            "type": "security_event",
-            "data": {
-                "id": event_id,
-                "timestamp": time.time(),
-                "node_id": verdict.node_id,
-                "attack_type": verdict.attack_type,
-                "confidence": verdict.confidence,
-                "detail": verdict.detail,
-                "action": "ISOLATE",
-            },
-        })
-        await manager.broadcast({"type": "topology", "data": app.state.recovery.status()})
+        await manager.broadcast({"type": "topology", "data": recovery.status()})
 
     return telemetry
 
 
 async def _ingest_loop(app: FastAPI) -> None:
-    source = get_source()
     try:
-        async for packet in source.packets():
+        while True:
             try:
-                await handle_packet(app, packet)
+                async for packet in app.state.source.packets():
+                    try:
+                        await handle_packet(app, packet)
+                    except Exception:
+                        logger.exception("Failed to process packet: %s", packet)
+                return  # the source ended on its own
             except Exception:
-                logger.exception("Failed to process packet: %s", packet)
+                # A source failure (e.g. the gateway's USB cable was unplugged)
+                # must not silently end ingestion for the rest of the process.
+                logger.exception("Telemetry source failed; restarting it in 2s")
+                await asyncio.sleep(2)
     except asyncio.CancelledError:
         pass
 
@@ -113,6 +182,10 @@ async def lifespan(app: FastAPI):
         known_nodes=set(config.NODE_IDS),
     )
     app.state.aggregator = PacketAggregator(config.TELEMETRY_WINDOW_SECONDS)
+    app.state.source = get_source()
+    app.state.node_touch = {}
+    app.state.blocked_counts = {}
+    app.state.blocked_last_emit = {}
     app.state.ingest_task = asyncio.create_task(_ingest_loop(app))
 
     logger.info("SecureMesh AI gateway ready — nodes=%s simulate=%s", config.NODE_IDS, config.SIMULATE)
@@ -136,8 +209,18 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.disconnect(websocket)
 
 
+class RevalidatingStaticFiles(StaticFiles):
+    """Dashboard files change with every update; make browsers revalidate
+    (cheap 304 via ETag) instead of serving stale scripts and styles."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 if DASHBOARD_DIR.exists():
-    app.mount("/", StaticFiles(directory=str(DASHBOARD_DIR), html=True), name="dashboard")
+    app.mount("/", RevalidatingStaticFiles(directory=str(DASHBOARD_DIR), html=True), name="dashboard")
 
 
 if __name__ == "__main__":

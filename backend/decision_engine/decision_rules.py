@@ -26,7 +26,7 @@ class DecisionEngine:
         self.dos_threshold = dos_threshold
         self.rssi_jump_dbm = rssi_jump_dbm
         self.known_nodes = known_nodes
-        self._last_rssi: dict[str, float] = {}
+        self._rssi_baseline: dict[str, float] = {}
 
     def evaluate(self, telemetry: dict) -> Optional[Verdict]:
         source = telemetry["source"]
@@ -36,7 +36,10 @@ class DecisionEngine:
                             f"Unregistered node {source} transmitting on the mesh")
 
         if telemetry.get("packet_rate", 0) > self.dos_threshold:
-            confidence = min(0.99, telemetry["packet_rate"] / (self.dos_threshold * 2))
+            # Rule-based verdicts have no model probability. Any breach is a firm
+            # hit (0.7); confidence then grows with how far the rate exceeds the limit.
+            excess = (telemetry["packet_rate"] - self.dos_threshold) / self.dos_threshold
+            confidence = 0.7 + 0.29 * min(1.0, excess)
             return Verdict(source, "DOS", round(confidence, 2),
                             f"Packet rate {telemetry['packet_rate']:.1f} pkts/s exceeds "
                             f"{self.dos_threshold:.0f} pkts/s threshold")
@@ -52,16 +55,17 @@ class DecisionEngine:
         # Baseline RSSI per *link* (source+destination), not per source node:
         # a node's signal strength naturally differs across its several peers,
         # so comparing against the wrong peer's baseline reads as a false jump.
+        # The instantaneous sample is compared against a smoothed baseline so a
+        # single spoofed frame is not diluted by the rolling-window average.
         link_key = source + "->" + telemetry["destination"]
-        rssi = telemetry.get("rssi")
-        prev_rssi = self._last_rssi.get(link_key)
+        rssi = telemetry.get("rssi_instant", telemetry.get("rssi"))
+        baseline = self._rssi_baseline.get(link_key)
         if rssi is not None:
-            if prev_rssi is not None and abs(rssi - prev_rssi) >= self.rssi_jump_dbm:
-                self._last_rssi[link_key] = rssi
+            if baseline is not None and abs(rssi - baseline) >= self.rssi_jump_dbm:
                 return Verdict(source, "SPOOFING", 0.7,
                                 f"RSSI on link {source}->{telemetry['destination']} jumped "
-                                f"{prev_rssi:.0f} -> {rssi:.0f} dBm, inconsistent with the "
+                                f"{baseline:.0f} -> {rssi:.0f} dBm, inconsistent with the "
                                 f"node's known radio identity")
-            self._last_rssi[link_key] = rssi
+            self._rssi_baseline[link_key] = rssi if baseline is None else 0.7 * baseline + 0.3 * rssi
 
         return None
