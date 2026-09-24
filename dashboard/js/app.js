@@ -9,6 +9,7 @@
 
   var state = { status: null, nodes: [], topology: null, alerts: 0 };
   var perNode = {};            // node id -> { times[], sent, blocked, rssi }
+  var peerDrops = {};          // peer id -> { reporter id -> drops reported by that node }
   var recent = [];             // timestamps of delivered packets, for the net-rate stat
   var matrixRows = {};         // node id -> { tr, cells }
   var selectedNode = null;
@@ -90,7 +91,7 @@
     var tr = document.createElement("tr");
     tr.className = "clickable";
     var cells = [];
-    for (var i = 0; i < 6; i++) { var td = document.createElement("td"); tr.appendChild(td); cells.push(td); }
+    for (var i = 0; i < 7; i++) { var td = document.createElement("td"); tr.appendChild(td); cells.push(td); }
     cells[0].textContent = "N" + id;
     tr.addEventListener("click", function () { selectNode(selectedNode === id ? null : id); });
     $("nodeMatrix").querySelector("tbody").appendChild(tr);
@@ -110,8 +111,10 @@
       row.cells[1].appendChild(statusBadgeNode(node.status));
       row.cells[2].textContent = (stats.times.length / (RATE_WINDOW_MS / 1000)).toFixed(1) + "/s";
       row.cells[3].textContent = stats.rssi === null ? "–" : stats.rssi + " dBm";
-      row.cells[4].textContent = stats.sent.toLocaleString();
-      row.cells[5].textContent = stats.blocked.toLocaleString();
+      var drops = dropsFor(id);
+      row.cells[4].textContent = drops === null ? "–" : drops.toLocaleString();
+      row.cells[5].textContent = stats.sent.toLocaleString();
+      row.cells[6].textContent = stats.blocked.toLocaleString();
       row.tr.classList.toggle("selected", selectedNode === id);
     });
   }
@@ -168,13 +171,22 @@
 
   function onTelemetry(t) {
     var src = Number(t.source), dst = Number(t.destination);
-    var stats = statsFor(src);
+    var isTx = t.direction === "TX";
     var kind = "ok";
+    // The pulse follows the physical hop: the receiver of an RX line, the
+    // next hop of a TX line (falling back to the final destination).
+    var to = Number(isTx ? (t.hop || dst) : (t.receiver || dst));
 
     if (t.packet_status === "BLOCKED") {
-      stats.blocked = t.blocked_total || stats.blocked + 1;
+      var blocked = statsFor(src);
+      blocked.blocked = t.blocked_total || blocked.blocked + 1;
       kind = "blocked";
+    } else if (isTx) {
+      // TX lines are the sending node's own log (its `source` is the printing
+      // node even when relaying), so they do not count as traffic from it.
+      if (t.packet_status === "FAIL") kind = "warn";
     } else {
+      var stats = statsFor(src);
       var now = Date.now();
       stats.times.push(now);
       recent.push(now);
@@ -184,7 +196,18 @@
     }
 
     PacketInspector.add(t);
-    Topology.pulse(src, dst, kind);
+    Topology.pulse(src, to, kind);
+  }
+
+  function onPeerTelemetry(s) {
+    if (!peerDrops[s.peer]) peerDrops[s.peer] = {};
+    peerDrops[s.peer][s.reporter] = s.drops;
+  }
+
+  function dropsFor(id) {
+    var reporters = peerDrops[id];
+    if (!reporters) return null;
+    return Object.keys(reporters).reduce(function (sum, r) { return sum + reporters[r]; }, 0);
   }
 
   function connectWebSocket() {
@@ -201,6 +224,8 @@
       var msg = JSON.parse(evt.data);
       if (msg.type === "telemetry") {
         onTelemetry(msg.data);
+      } else if (msg.type === "peer_telemetry") {
+        onPeerTelemetry(msg.data);
       } else if (msg.type === "security_event") {
         if (msg.data.event_type === "SIM_RESET") {
           Object.keys(perNode).forEach(function (id) { perNode[id].blocked = 0; });

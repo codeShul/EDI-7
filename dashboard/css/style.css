@@ -133,7 +133,9 @@ tr.empty td { text-align: center; color: var(--muted); font-family: var(--font-s
 }
 .tag-ok { background: var(--good-bg); color: var(--good-text); }
 .tag-gap { background: var(--warning-bg); color: var(--warning-text); }
-.tag-dup, .tag-blocked { background: var(--critical-bg); color: var(--critical-text); }
+.tag-dup, .tag-blocked, .tag-fail { background: var(--critical-bg); color: var(--critical-text); }
+.tag-rx { background: var(--accent-bg); color: var(--accent-text); }
+.tag-tx { background: var(--surface-3); color: var(--text-2); }
 .lvl-CRIT { background: var(--critical-bg); color: var(--critical-text); }
 .lvl-WARN { background: var(--warning-bg); color: var(--warning-text); }
 .lvl-INFO { background: var(--accent-bg); color: var(--accent-text); }

@@ -27,10 +27,10 @@ var PacketInspector = (function () {
     return td;
   }
 
-  function statusCell(status) {
+  function statusCell(status, className) {
     var td = document.createElement("td");
     var tag = document.createElement("span");
-    tag.className = "tag tag-" + String(status).toLowerCase();
+    tag.className = "tag " + (className || "tag-" + String(status).toLowerCase());
     tag.textContent = status;
     td.appendChild(tag);
     return td;
@@ -66,20 +66,40 @@ var PacketInspector = (function () {
     return lines.join("\n");
   }
 
+  function routingNote(p) {
+    var at = p.receiver ? "N" + p.receiver : "the receiver";
+    switch (p.action) {
+      case "CONSUMED": return " Delivered to " + at + " (final destination).";
+      case "RELAYING": return " " + at + " is not the destination and forwards it with TTL " +
+        (p.ttl === null || p.ttl === undefined ? "?" : p.ttl - 1) + ".";
+      case "TTL_EXPIRED": return " TTL exhausted at " + at + "; the frame is dropped.";
+      default: return "";
+    }
+  }
+
   function sequenceAnalysis(p) {
     var link = "N" + p.source + " → N" + p.destination;
+
+    if (p.direction === "TX") {
+      var next = p.hop ? "N" + p.hop : "its next hop";
+      return p.delivery === "FAIL"
+        ? { cls: "dup", text: "Delivery FAILED: " + next + " did not acknowledge the frame (offline or out of range)." }
+        : { cls: "", text: "Sent towards " + next + ": radio ACK received. Outgoing frames are not sequence-checked." };
+    }
+
     switch (p.packet_status) {
       case "DUP":
-        return { cls: "dup", text: "Sequence gap: 0 — DUPLICATE detected. #" + p.sequence_number +
-          " was already seen on " + link + " (possible replay attack)." };
+        return { cls: "dup", text: "Sequence gap: 0 — exact repeat (same #" + p.sequence_number + " and TTL) from N" +
+          p.source + ". Repeated frames are the replay signature." + routingNote(p) };
       case "GAP":
-        return { cls: "gap", text: "Sequence gap detected on " + link + ": jumped to #" + p.sequence_number +
-          ". Frames were dropped or reordered." };
+        return { cls: "gap", text: "Sequence jumped to #" + p.sequence_number + " for N" + p.source +
+          ". Normal when the sender also talks to other nodes." + routingNote(p) };
       case "BLOCKED":
         return { cls: "blocked", text: "Dropped at the gateway: N" + p.source + " or N" + p.destination +
           " is isolated. Not evaluated by the decision engine." };
       default:
-        return { cls: "", text: "Sequence continuity OK — #" + p.sequence_number + " follows the expected order on " + link + "." };
+        return { cls: "", text: "Sequence continuity OK — #" + p.sequence_number + " from N" + p.source +
+          " on " + link + "." + routingNote(p) };
     }
   }
 
@@ -87,9 +107,14 @@ var PacketInspector = (function () {
     return {
       packet: p.n,
       time: new Date(p.timestamp * 1000).toISOString(),
+      direction: p.direction || "RX",
       src: "N" + p.source,
       dst: "N" + p.destination,
+      receiver: p.receiver ? "N" + p.receiver : "–",
+      hop: p.hop ? "N" + p.hop : "–",
       type: p.type,
+      action: orDash(p.action),
+      delivery: orDash(p.delivery),
       ttl: orDash(p.ttl),
       seq: orDash(p.sequence_number),
       rssi_dbm: orDash(p.rssi_instant),
@@ -124,10 +149,13 @@ var PacketInspector = (function () {
     tr.className = "clickable" + (selected === entry ? " selected" : "");
     tr.appendChild(cell(entry.n));
     tr.appendChild(cell(clock(entry.timestamp)));
+    tr.appendChild(statusCell(entry.direction || "RX", "tag-" + (entry.direction || "RX").toLowerCase()));
     tr.appendChild(cell("N" + entry.source));
     tr.appendChild(cell("N" + entry.destination));
     tr.appendChild(cell(entry.type));
+    tr.appendChild(cell(orDash(entry.action)));
     tr.appendChild(cell(orDash(entry.ttl)));
+    tr.appendChild(cell(entry.hop ? "N" + entry.hop : "–"));
     tr.appendChild(cell(orDash(entry.rssi_instant)));
     tr.appendChild(cell(orDash(entry.sequence_number)));
     tr.appendChild(statusCell(entry.packet_status));
@@ -140,7 +168,7 @@ var PacketInspector = (function () {
     var tr = document.createElement("tr");
     tr.className = "empty";
     var td = cell("Waiting for packets…");
-    td.colSpan = 9;
+    td.colSpan = 12;
     tr.appendChild(td);
     body.appendChild(tr);
   }

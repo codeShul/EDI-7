@@ -9,7 +9,7 @@ while the built-in traffic simulator is the active data source).
 from __future__ import annotations
 
 import json
-from typing import Literal, Optional
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -17,17 +17,6 @@ from pydantic import BaseModel
 from ..telemetry.serial_reader import SimulatedSource
 
 router = APIRouter()
-
-
-class TelemetryIn(BaseModel):
-    src: int
-    dst: int
-    seq: Optional[int] = None
-    type: Optional[str] = "DATA"
-    ttl: Optional[int] = None
-    rssi: Optional[int] = None
-    checksum: Optional[int] = None
-    payload: Optional[str] = None
 
 
 class ControlRequest(BaseModel):
@@ -121,17 +110,25 @@ async def get_routes(request: Request):
 
 
 @router.post("/telemetry")
-async def post_telemetry(payload: TelemetryIn, request: Request):
-    """Lets a gateway push a single raw packet over HTTP instead of USB
-    serial (e.g. the dashboard's WebSerial bridge). Runs through the exact
-    same ingestion path (aggregation, decision engine, DB, WebSocket
-    broadcast) as the background feed."""
-    from ..server import handle_packet  # deferred import avoids a circular import at load time
+async def post_telemetry(request: Request):
+    """Lets a gateway push one JSON line of docs/serial_json_schema.md (RX, TX,
+    TELEMETRY or ALERT) over HTTP instead of USB serial, e.g. from the
+    dashboard's WebSerial bridge. It goes through the exact same ingestion path
+    (aggregation, decision engine, DB, WebSocket broadcast) as the background
+    feed. Lines outside the schema are acknowledged and ignored."""
+    from ..server import handle_message  # deferred import avoids a circular import at load time
 
-    telemetry = await handle_packet(request.app, payload.model_dump())
-    if telemetry is None:
-        raise HTTPException(status_code=400, detail="Packet missing src/dst")
-    return telemetry
+    try:
+        message = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+    if not isinstance(message, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+
+    result = await handle_message(request.app, message)
+    if result is None:
+        return {"ok": True, "ignored": True}
+    return result
 
 
 async def _apply_control_action(request: Request, node_id: int, new_status: str,

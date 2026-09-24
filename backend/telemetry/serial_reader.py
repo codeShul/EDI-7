@@ -1,15 +1,17 @@
-"""Produces raw mesh packets for the ingestion pipeline.
+"""Produces the gateway's JSON lines for the ingestion pipeline.
 
-Two sources are supported behind the same `TelemetrySource` interface:
+Two sources are supported behind the same `TelemetrySource` interface; both
+yield dicts in the flat schema of docs/serial_json_schema.md (RX / TX /
+TELEMETRY / ALERT):
 
 - `SerialSource`  — reads newline-delimited JSON from a real gateway ESP32
-  over USB serial (per docs/mesh_base_plan.md Step 3: `{"src":1,"dst":5,
-  "seq":105,"type":"DATA","ttl":4,"rssi":-52}`).
-- `SimulatedSource` — generates plausible mesh traffic so the backend and
-  dashboard are fully testable before hardware/firmware is ready. It can also
-  inject the three attack patterns the decision engine looks for (DoS flood,
-  replay, RSSI spoofing) so the detect -> isolate -> reroute flow can be
-  demonstrated on demand.
+  over USB serial.
+- `SimulatedSource` — generates mesh traffic in the same schema, mirroring the
+  firmware (one sequence counter per sender, relays re-sending at TTL-1, a
+  1 s TELEMETRY summary per peer), so the backend and dashboard are fully
+  testable before hardware is attached. It can also inject the attack
+  patterns the decision engine looks for (DoS flood, replay, RSSI spoofing) so
+  detect -> isolate -> reroute can be demonstrated on demand.
 
 `get_source()` picks the real serial link when `SECUREMESH_SIMULATE=0` and the
 configured port is actually reachable, and falls back to the simulator
@@ -33,6 +35,17 @@ PACKET_TYPES = ["DATA", "DATA", "DATA", "HEARTBEAT", "ROUTE_SYNC"]
 ATTACKS = ("DOS", "REPLAY", "SPOOFING")
 
 
+def flat(kind: str, **fields) -> dict:
+    """A message with every key the firmware's `print_json` always prints."""
+    message = {
+        "type": kind, "src": 0, "dst": 0, "seq": 0, "pkt_type": "", "ttl": 0, "rssi": 0,
+        "receiver": 0, "hop": 0, "action": "", "delivery": "", "rate": 0, "avg_rssi": 0,
+        "drops": 0, "threat": "",
+    }
+    message.update(fields)
+    return message
+
+
 class TelemetrySource:
     supports_attacks = False
 
@@ -51,15 +64,20 @@ class SimulatedSource(TelemetrySource):
     def __init__(self, node_ids: list[int]):
         self.node_ids = node_ids
         self.enabled = True
-        self._seq: dict[int, int] = {}
-        self._rssi: dict[tuple[int, int], float] = {}
+        self._seq: dict[int, int] = {}                     # one counter per sending node
+        self._rssi: dict[tuple[int, int], float] = {}      # per radio link
         self._isolated: set[int] = set()
-        self._dos: dict[int, int] = {}          # attacker -> victim, flooding until reset
-        self._pending: deque[dict] = deque()     # queued one-shot attack packets
+        self._dos: dict[int, int] = {}                     # attacker -> victim, flooding until reset
+        self._pending: deque[dict] = deque()               # paced attack frames
+        self._out: deque[dict] = deque()                   # frames to send back to back
+        self._rx_log: deque[tuple[float, int, int, int]] = deque()   # (t, peer, reporter, rssi)
+        self._last_seq: dict[tuple[int, int], int] = {}
+        self._drops: dict[tuple[int, int], int] = {}
 
     def set_isolated(self, nodes: set[int]) -> None:
         self._isolated = set(nodes)
 
+    # ---- frame construction ---------------------------------------------------
     def _next_rssi(self, key: tuple[int, int]) -> int:
         # Real RSSI drifts slowly on a stable link; a fresh independent random
         # value per packet would look like constant spoofing to the decision
@@ -69,20 +87,61 @@ class SimulatedSource(TelemetrySource):
         self._rssi[key] = current
         return round(current)
 
-    def _packet(self, src: int, dst: int, ptype: str | None = None) -> dict:
-        # Like the firmware, one sequence counter per sending node (shared by
-        # all destinations); only the RSSI baseline is per link.
+    def _new_frame(self, src: int, dst: int, ptype: str | None = None) -> dict:
         self._seq[src] = self._seq.get(src, 0) + 1
-        return {
-            "src": src,
-            "dst": dst,
-            "seq": self._seq[src],
-            "type": ptype or random.choice(PACKET_TYPES),
-            "ttl": random.randint(2, 4),
-            "rssi": self._next_rssi((src, dst)),
-        }
+        return {"src": src, "dst": dst, "seq": self._seq[src],
+                "pkt_type": ptype or random.choice(PACKET_TYPES), "ttl": config.INITIAL_TTL}
 
-    # ---- attack injection ---------------------------------------------------
+    @staticmethod
+    def _rx(frame: dict, receiver: int, action: str, rssi: int, ttl: int | None = None) -> dict:
+        return flat("RX", src=frame["src"], dst=frame["dst"], seq=frame["seq"],
+                    pkt_type=frame["pkt_type"], ttl=frame["ttl"] if ttl is None else ttl,
+                    rssi=rssi, receiver=receiver, action=action)
+
+    def _traffic(self, src: int, dst: int) -> list[dict]:
+        """Everything the mesh prints for one frame: usually a single RX at the
+        destination; sometimes a relay chain (RX RELAYING, TX at TTL-1, RX)."""
+        frame = self._new_frame(src, dst)
+        relays = [n for n in self.node_ids if n not in self._isolated and n not in (src, dst)]
+        if relays and random.random() < 0.15:
+            relay = random.choice(relays)
+            ttl = frame["ttl"] - 1
+            return [
+                self._rx(frame, relay, "RELAYING", self._next_rssi((src, relay))),
+                flat("TX", src=relay, dst=dst, seq=frame["seq"], pkt_type="DATA", ttl=ttl,
+                     receiver=relay, hop=dst, action="SENT",
+                     delivery="FAIL" if random.random() < 0.03 else "SUCCESS"),
+                self._rx(frame, dst, "CONSUMED", self._next_rssi((relay, dst)), ttl=ttl),
+            ]
+        return [self._rx(frame, dst, "CONSUMED", self._next_rssi((src, dst)))]
+
+    # ---- per-second TELEMETRY -------------------------------------------------
+    def _emit(self, message: dict) -> dict:
+        if message["type"] == "RX":
+            peer, reporter = message["src"], message["receiver"]
+            self._rx_log.append((time.monotonic(), peer, reporter, message["rssi"]))
+            key = (peer, reporter)
+            last = self._last_seq.get(key)
+            if last is not None and message["seq"] > last + 1:
+                self._drops[key] = self._drops.get(key, 0) + message["seq"] - last - 1
+            self._last_seq[key] = max(message["seq"], last or 0)
+        return message
+
+    def _telemetry_messages(self) -> list[dict]:
+        cutoff = time.monotonic() - 1.0
+        while self._rx_log and self._rx_log[0][0] < cutoff:
+            self._rx_log.popleft()
+        groups: dict[tuple[int, int], list[int]] = {}
+        for _, peer, reporter, rssi in self._rx_log:
+            groups.setdefault((peer, reporter), []).append(rssi)
+        return [
+            flat("TELEMETRY", src=peer, dst=reporter, receiver=reporter,
+                 rssi=round(sum(rssis) / len(rssis)), rate=len(rssis),
+                 avg_rssi=round(sum(rssis) / len(rssis)), drops=self._drops.get((peer, reporter), 0))
+            for (peer, reporter), rssis in groups.items()
+        ]
+
+    # ---- attack injection -----------------------------------------------------
     def start_attack(self, attack: str, node: int) -> str:
         peers = [n for n in self.node_ids if n != node and n not in self._isolated]
         if not peers:
@@ -94,15 +153,18 @@ class SimulatedSource(TelemetrySource):
             return f"DoS flood from N{node} towards N{peer}"
 
         if attack == "REPLAY":
-            frame = self._packet(node, peer, "DATA")
-            self._pending.append(frame)
+            frame = self._new_frame(node, peer, "DATA")
+            message = self._rx(frame, peer, "CONSUMED", self._next_rssi((node, peer)))
+            self._pending.append(message)
             for _ in range(4):
-                self._pending.append(dict(frame))  # exact copies: same sequence number and TTL
+                self._pending.append(dict(message))  # exact copies: same sequence number and TTL
             return f"Replay of frame #{frame['seq']} from N{node} to N{peer}"
 
         if attack == "SPOOFING":
-            baseline = self._packet(node, peer, "DATA")
-            spoofed = self._packet(node, peer, "DATA")
+            baseline = self._rx(self._new_frame(node, peer, "DATA"), peer, "CONSUMED",
+                                self._next_rssi((node, peer)))
+            spoofed = self._rx(self._new_frame(node, peer, "DATA"), peer, "CONSUMED",
+                               self._next_rssi((node, peer)))
             spoofed["rssi"] = baseline["rssi"] + (-30 if baseline["rssi"] > -62 else 30)
             self._pending.append(baseline)
             self._pending.append(spoofed)
@@ -113,41 +175,55 @@ class SimulatedSource(TelemetrySource):
     def reset(self) -> None:
         self._dos.clear()
         self._pending.clear()
+        self._out.clear()
+        self._rx_log.clear()   # otherwise the next TELEMETRY still reports the flood that just stopped
 
-    # ---- packet stream -------------------------------------------------------
+    # ---- message stream -------------------------------------------------------
     async def packets(self) -> AsyncIterator[dict]:
         logger.warning("No ESP32 gateway configured — running in SIMULATED telemetry mode")
-        next_normal = 0.0  # background traffic is scheduled by time so a flood keeps its pace
+        next_normal = 0.0       # background traffic is scheduled by time so a flood keeps its pace
+        next_telemetry = time.monotonic() + 1.0
         while True:
             if not self.enabled:
                 await asyncio.sleep(0.25)
                 continue
 
+            if self._out:
+                yield self._emit(self._out.popleft())
+                continue
+
             if self._pending:
                 await asyncio.sleep(0.2)
                 if self._pending:
-                    yield self._pending.popleft()
+                    yield self._emit(self._pending.popleft())
                 continue
 
             now = time.monotonic()
+            if now >= next_telemetry:
+                next_telemetry = now + 1.0
+                self._out.extend(self._telemetry_messages())
+                continue
+
             if self._dos and now < next_normal:
                 await asyncio.sleep(0.01)
                 if not self._dos:  # a reset can land while we were sleeping
                     continue
                 attacker, victim = random.choice(list(self._dos.items()))
-                yield self._packet(attacker, victim, "DATA")
+                frame = self._new_frame(attacker, victim, "DATA")
+                yield self._emit(self._rx(frame, victim, "CONSUMED", self._next_rssi((attacker, victim))))
                 continue
 
-            if next_normal > now:
-                await asyncio.sleep(next_normal - now)
-            next_normal = time.monotonic() + random.uniform(0.15, 0.45)
+            if now < next_normal:
+                await asyncio.sleep(max(0.0, min(next_normal, next_telemetry) - now))
+                continue
 
+            next_normal = now + random.uniform(0.15, 0.45)
             active = [n for n in self.node_ids if n not in self._isolated]
             if len(active) < 2:
                 continue
             src = random.choice(active)
             dst = random.choice([n for n in active if n != src])
-            yield self._packet(src, dst)
+            self._out.extend(self._traffic(src, dst))
 
 
 class SerialSource(TelemetrySource):

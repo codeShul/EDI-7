@@ -48,7 +48,7 @@
       <h2>Node telemetry <span class="hint">live, last 3 s</span></h2>
       <div class="table-wrap">
         <table id="nodeMatrix">
-          <thead><tr><th>Node</th><th>Status</th><th>Rate</th><th>RSSI</th><th>Pkts Tx</th><th>Blocked</th></tr></thead>
+          <thead><tr><th>Node</th><th>Status</th><th>Rate</th><th>RSSI</th><th title="Sequence gaps reported by the nodes (cumulative). Includes frames addressed to other nodes, so not the same as loss.">Drops</th><th title="Frames observed from this node">Frames</th><th>Blocked</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -65,7 +65,7 @@
     <div class="table-wrap packets">
       <table>
         <thead>
-          <tr><th>#</th><th>Time</th><th>Source</th><th>Target</th><th>Type</th><th>TTL</th><th>RSSI</th><th>Seq</th><th>Status</th></tr>
+          <tr><th>#</th><th>Time</th><th>Dir</th><th>Source</th><th>Target</th><th>Type</th><th>Action</th><th>TTL</th><th>Hop</th><th>RSSI</th><th>Seq</th><th>Status</th></tr>
         </thead>
         <tbody id="pktBody"></tbody>
       </table>

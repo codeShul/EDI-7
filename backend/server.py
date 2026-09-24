@@ -25,8 +25,9 @@ from . import config
 from .api import routes_api
 from .api.websocket_hub import manager
 from .database.db_manager import DatabaseEngine
-from .decision_engine.decision_rules import DecisionEngine
+from .decision_engine.decision_rules import DecisionEngine, Verdict
 from .decision_engine.recovery_controller import RecoveryController
+from .telemetry import gateway_schema
 from .telemetry.serial_reader import get_source
 from .telemetry.telemetry_parser import PacketAggregator
 
@@ -80,17 +81,19 @@ async def _touch_node(app: FastAPI, node_id: str) -> None:
         await app.state.db.upsert_node(node_id)
 
 
-async def _handle_blocked(app: FastAPI, packet: dict, src: int, dst: int) -> dict:
-    """Traffic from/to an isolated node is dropped at the gateway. It is still
-    counted and (sampled) shown so the dashboard can display the block."""
-    counts = app.state.blocked_counts
-    counts[src] = counts.get(src, 0) + 1
-    now = time.time()
-    rssi = packet.get("rssi") or None  # 0 means "no reception" (gateway-originated packet)
-    dropped = {
-        "timestamp": now,
-        "source": str(src),
-        "destination": str(dst),
+def _packet_view(packet: dict, status: str, **extra) -> dict:
+    """The dict the dashboard's packet inspector consumes, for packets that
+    bypass the aggregator (outgoing TX lines and blocked traffic)."""
+    rssi = packet.get("rssi") or None  # 0 means "no reception"
+    view = {
+        "timestamp": time.time(),
+        "direction": packet.get("direction", "RX"),
+        "source": str(packet["src"]),
+        "destination": str(packet["dst"]),
+        "receiver": packet.get("receiver"),
+        "hop": packet.get("hop"),
+        "action": packet.get("action"),
+        "delivery": packet.get("delivery"),
         "packet_rate": 0.0,
         "packet_loss": None,
         "rssi": rssi,
@@ -100,9 +103,42 @@ async def _handle_blocked(app: FastAPI, packet: dict, src: int, dst: int) -> dic
         "ttl": packet.get("ttl"),
         "checksum": packet.get("checksum"),
         "payload": packet.get("payload"),
-        "packet_status": "BLOCKED",
-        "blocked_total": counts[src],
+        "packet_status": status,
     }
+    view.update(extra)
+    return view
+
+
+async def _apply_verdict(app: FastAPI, verdict: Verdict, prefix: str = "") -> None:
+    """Isolate the offending node, record the incident, tell the dashboard."""
+    node_id = int(verdict.node_id)
+    recovery = app.state.recovery
+    if node_id in recovery.isolated:
+        return
+
+    recovery.isolate(node_id)
+    sync_source(app)
+    await app.state.db.set_node_status(verdict.node_id, "ISOLATED")
+
+    event_id = await record_event(
+        app, "ATTACK_DETECTED", verdict.node_id,
+        attack_type=verdict.attack_type, confidence=verdict.confidence,
+        action="ISOLATE", recovery_route=json.dumps(recovery.status()),
+        status="OPEN", detail=prefix + verdict.detail,
+    )
+    logger.warning("Security event #%s: %s on node %s (%s)",
+                    event_id, verdict.attack_type, verdict.node_id, prefix + verdict.detail)
+    await manager.broadcast({"type": "topology", "data": recovery.status()})
+
+
+async def _handle_blocked(app: FastAPI, packet: dict) -> dict:
+    """Traffic from/to an isolated node is dropped at the gateway. It is still
+    counted and (sampled) shown so the dashboard can display the block."""
+    src = packet["src"]
+    counts = app.state.blocked_counts
+    counts[src] = counts.get(src, 0) + 1
+    dropped = _packet_view(packet, "BLOCKED", blocked_total=counts[src])
+    now = time.time()
     if now - app.state.blocked_last_emit.get(src, 0.0) >= BLOCKED_BROADCAST_INTERVAL:
         app.state.blocked_last_emit[src] = now
         await manager.broadcast({"type": "telemetry", "data": dropped})
@@ -110,17 +146,12 @@ async def _handle_blocked(app: FastAPI, packet: dict, src: int, dst: int) -> dic
 
 
 async def handle_packet(app: FastAPI, packet: dict) -> Optional[dict]:
-    """Single entry point for every raw mesh packet, whether it arrives via
-    the background serial/simulated feed or the HTTP `/api/telemetry` route:
-    aggregate -> persist -> broadcast -> evaluate -> isolate + log on attack."""
-    try:
-        src, dst = int(packet["src"]), int(packet["dst"])
-    except (KeyError, TypeError, ValueError):
-        return None
-
+    """An RX line (a packet as received): aggregate -> persist -> broadcast ->
+    evaluate -> isolate + log on attack. Blocked if either end is isolated."""
+    src, dst = packet["src"], packet["dst"]
     recovery = app.state.recovery
     if src in recovery.isolated or dst in recovery.isolated:
-        return await _handle_blocked(app, packet, src, dst)
+        return await _handle_blocked(app, packet)
 
     telemetry = app.state.aggregator.ingest(packet)
     if telemetry is None:
@@ -132,33 +163,76 @@ async def handle_packet(app: FastAPI, packet: dict) -> Optional[dict]:
 
     verdict = app.state.decision_engine.evaluate(telemetry)
     if verdict is not None:
-        node_id = int(verdict.node_id)
-        recovery.isolate(node_id)
-        sync_source(app)
-        await app.state.db.set_node_status(verdict.node_id, "ISOLATED")
-
-        event_id = await record_event(
-            app, "ATTACK_DETECTED", verdict.node_id,
-            attack_type=verdict.attack_type, confidence=verdict.confidence,
-            action="ISOLATE", recovery_route=json.dumps(recovery.status()),
-            status="OPEN", detail=verdict.detail,
-        )
-        logger.warning("Security event #%s: %s on node %s (%s)",
-                        event_id, verdict.attack_type, verdict.node_id, verdict.detail)
-        await manager.broadcast({"type": "topology", "data": recovery.status()})
-
+        await _apply_verdict(app, verdict)
     return telemetry
+
+
+async def handle_tx(app: FastAPI, packet: dict) -> dict:
+    """A TX line (a packet a node sent). Display only: its `src` is the
+    printing node even when relaying, so it must not feed sequence tracking."""
+    status = "FAIL" if packet.get("delivery") == "FAIL" else "OK"
+    view = _packet_view(packet, status)
+    await manager.broadcast({"type": "telemetry", "data": view})
+    return view
+
+
+async def handle_peer_stats(app: FastAPI, stats: dict) -> dict:
+    """A TELEMETRY line: one peer's statistics over the reporter's last second."""
+    stats = {**stats, "timestamp": time.time()}
+    await manager.broadcast({"type": "peer_telemetry", "data": stats})
+
+    if stats["peer"] not in app.state.recovery.isolated:
+        verdict = app.state.decision_engine.evaluate_peer(stats["peer"], stats["reporter"], stats["rate"])
+        if verdict is not None:
+            await _apply_verdict(app, verdict)
+    return stats
+
+
+async def handle_alert(app: FastAPI, alert: dict) -> dict:
+    """An ALERT line: a node's own detection result. Mirror it in the gateway's
+    model (isolate the attacker) so the topology and logs reflect it."""
+    detected_by = alert["detected_by"]
+    who = f"N{detected_by}" if detected_by is not None else "a mesh node"
+    if alert["action"] == "ISOLATED":
+        await _apply_verdict(
+            app,
+            Verdict(str(alert["attacker"]), alert["threat"], None, f"threat classified on-device by {who}"),
+            prefix="On-device detection: ",
+        )
+    return alert
+
+
+async def handle_message(app: FastAPI, msg: dict) -> Optional[dict]:
+    """Single entry point for every JSON line from the gateway, whether it
+    arrives through the background feed or POST /api/telemetry. Returns None
+    for lines that are not part of the schema."""
+    if not isinstance(msg, dict):
+        return None
+
+    kind = gateway_schema.classify(msg)
+    if kind in ("RX", "TX"):
+        packet = gateway_schema.to_packet(msg, kind)
+        if packet is None:
+            return None
+        return await (handle_packet(app, packet) if kind == "RX" else handle_tx(app, packet))
+    if kind == "TELEMETRY":
+        stats = gateway_schema.to_peer_stats(msg)
+        return await handle_peer_stats(app, stats) if stats else None
+    if kind == "ALERT":
+        alert = gateway_schema.to_alert(msg)
+        return await handle_alert(app, alert) if alert else None
+    return None
 
 
 async def _ingest_loop(app: FastAPI) -> None:
     try:
         while True:
             try:
-                async for packet in app.state.source.packets():
+                async for message in app.state.source.packets():
                     try:
-                        await handle_packet(app, packet)
+                        await handle_message(app, message)
                     except Exception:
-                        logger.exception("Failed to process packet: %s", packet)
+                        logger.exception("Failed to process message: %s", message)
                 return  # the source ended on its own
             except Exception:
                 # A source failure (e.g. the gateway's USB cable was unplugged)
@@ -182,6 +256,7 @@ async def lifespan(app: FastAPI):
         rssi_jump_dbm=config.RSSI_SPOOF_JUMP_DBM,
         known_nodes=set(config.NODE_IDS),
         replay_dup_threshold=config.REPLAY_DUPLICATE_THRESHOLD,
+        initial_ttl=config.INITIAL_TTL,
     )
     app.state.aggregator = PacketAggregator(config.TELEMETRY_WINDOW_SECONDS)
     app.state.source = get_source()

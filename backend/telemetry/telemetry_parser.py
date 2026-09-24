@@ -1,7 +1,7 @@
 """Parses raw ESP-NOW gateway packets and maintains rolling per-link telemetry.
 
-Input is the `PACKET` line of docs/serial_json_schema.md:
-`{"src", "dst", "seq", "type", "ttl", "rssi"}`. The firmware-side
+Input is an `RX` line of docs/serial_json_schema.md, already normalised by
+`gateway_schema.to_packet` (`src`, `dst`, `seq`, `type`, `ttl`, `rssi`, ...). The firmware-side
 `TelemetryEngine` will eventually report window stats itself; until then this
 module computes the equivalent on the backend so the rest of the pipeline
 (decision engine, database, dashboard) works end to end.
@@ -96,6 +96,11 @@ class PacketAggregator:
             "sequence_anomalies": sum(1 for s in window if s[3]),
             "type": packet.get("type", "DATA"),
             "ttl": ttl,
+            "direction": packet.get("direction", "RX"),
+            "receiver": packet.get("receiver"),
+            "hop": packet.get("hop"),
+            "action": packet.get("action"),
+            "delivery": packet.get("delivery"),
             "checksum": packet.get("checksum"),
             "payload": packet.get("payload"),
             "packet_status": "DUP" if is_dup else ("GAP" if is_gap else "OK"),

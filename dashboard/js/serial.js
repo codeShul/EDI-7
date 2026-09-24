@@ -35,9 +35,9 @@ var SerialBridge = (function () {
     if (!line || line.charAt(0) !== "{") return;
     try {
       var packet = JSON.parse(line);
-      // The gateway also prints DELIVERY / TELEMETRY / ALERT lines (see
-      // docs/serial_json_schema.md); only PACKET lines carry src + dst.
-      if (typeof packet.src !== "number" || typeof packet.dst !== "number") return;
+      // Every gateway line is a JSON object (RX / TX / TELEMETRY / ALERT, see
+      // docs/serial_json_schema.md); the backend decides what to do with each.
+      if (packet === null || typeof packet !== "object" || Array.isArray(packet)) return;
       if (queue.length >= MAX_QUEUE) queue.shift();
       queue.push(packet);
       drain();
