@@ -58,13 +58,12 @@ void runReplayMode() {
     network_packet pkt;
     pkt.sender_id = NODE_ID; // 4
     pkt.target_id = attackTarget;
-    // Intentional replay: send old sequence number
-    pkt.seq_num = current_seq_num > 100 ? current_seq_num - 50 : 1; 
+    // Intentional replay: freeze the sequence number to trigger REPLAY detection
+    pkt.seq_num = current_seq_num; // Do NOT increment!
     pkt.packet_type = 0;
     pkt.ttl = 4;
     esp_now_send(mesh_macs[attackTarget], (uint8_t *) &pkt, sizeof(pkt));
-    delay(100); // Normal rate
-    current_seq_num++;
+    delay(50); // Burst it out fast enough to trip the 2-second window
 }
 
 void runSpoofingMode() {
@@ -123,9 +122,8 @@ void setup() {
         esp_now_add_peer(&peerInfo);
     }
 
-    // Pick a random target for this entire session (Node 1, 2, or 3)
-    randomSeed(analogRead(0));
-    attackTarget = random(1, 4);
+    // Always target Node 3 (the Gateway) so the PC dashboard can actually receive and display the attack traffic!
+    attackTarget = 3;
     
     modeStartTimeMs = millis();
     Serial.println("{\"type\":\"INIT\",\"status\":\"Attacker Autonomous Mode Ready\"}");
