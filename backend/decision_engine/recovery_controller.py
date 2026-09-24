@@ -13,7 +13,14 @@ import networkx as nx
 
 class RecoveryController:
     def __init__(self, node_ids: list[int]):
-        self._base_graph = nx.complete_graph(node_ids)
+        self._base_graph = nx.Graph()
+        self._base_graph.add_nodes_from(node_ids)
+        # ONLY Nodes 1, 2, and 3 are in the actual mesh network!
+        mesh_members = [n for n in node_ids if n in (1, 2, 3)]
+        for i in range(len(mesh_members)):
+            for j in range(i + 1, len(mesh_members)):
+                self._base_graph.add_edge(mesh_members[i], mesh_members[j])
+        
         self.graph = self._base_graph.copy()
         self.isolated: set[int] = set()
 
