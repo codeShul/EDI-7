@@ -241,22 +241,27 @@ class SerialSource(TelemetrySource):
         self.baudrate = baudrate
 
     async def packets(self) -> AsyncIterator[dict]:
-        import serial  # pyserial — imported lazily so it stays optional in simulate mode
+        import serial
 
-        ser = await asyncio.to_thread(serial.Serial, self.port, self.baudrate, timeout=1)
-        logger.info("Connected to gateway ESP32 on %s @ %d baud", self.port, self.baudrate)
-        try:
-            while True:
-                raw = await asyncio.to_thread(ser.readline)
-                line = raw.decode("utf-8", errors="ignore").strip()
-                if not line:
-                    continue
+        while True:
+            try:
+                ser = await asyncio.to_thread(serial.Serial, self.port, self.baudrate, timeout=1)
+                logger.info("Connected to gateway ESP32 on %s @ %d baud", self.port, self.baudrate)
                 try:
-                    yield json.loads(line)
-                except json.JSONDecodeError:
-                    logger.debug("Ignoring malformed serial line: %s", line)
-        finally:
-            await asyncio.to_thread(ser.close)
+                    while True:
+                        raw = await asyncio.to_thread(ser.readline)
+                        line = raw.decode("utf-8", errors="ignore").strip()
+                        if not line:
+                            continue
+                        try:
+                            yield json.loads(line)
+                        except json.JSONDecodeError:
+                            logger.debug("Ignoring malformed serial line: %s", line)
+                finally:
+                    await asyncio.to_thread(ser.close)
+            except Exception as exc:
+                logger.warning("Waiting for USB Gateway on %s... (%s)", self.port, exc)
+                await asyncio.sleep(2.0)
 
 
 def get_source() -> TelemetrySource:
@@ -269,14 +274,5 @@ def get_source() -> TelemetrySource:
         logger.warning("pyserial not installed — falling back to simulated telemetry")
         return SimulatedSource(config.NODE_IDS)
 
-    try:
-        probe = serial.Serial(config.SERIAL_PORT, config.SERIAL_BAUDRATE, timeout=0.1)
-        probe.close()
-    except Exception as exc:
-        logger.warning(
-            "Serial port %s unavailable (%s) — falling back to simulated telemetry",
-            config.SERIAL_PORT, exc,
-        )
-        return SimulatedSource(config.NODE_IDS)
-
+    # Always use the real serial source. If it's unplugged, it will just wait.
     return SerialSource(config.SERIAL_PORT, config.SERIAL_BAUDRATE)
