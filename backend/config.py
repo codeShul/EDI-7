@@ -17,7 +17,7 @@ SERIAL_BAUDRATE = int(os.getenv("SECUREMESH_BAUDRATE", "115200"))
 DB_PATH = os.getenv("SECUREMESH_DB_PATH", str(Path(__file__).parent / "securemesh.db"))
 
 TELEMETRY_WINDOW_SECONDS = float(os.getenv("SECUREMESH_WINDOW_SECONDS", "2.0"))
-DOS_PACKET_RATE_THRESHOLD = float(os.getenv("SECUREMESH_DOS_THRESHOLD", "20.0"))
-RSSI_SPOOF_JUMP_DBM = float(os.getenv("SECUREMESH_RSSI_JUMP_DBM", "15.0"))
+DOS_PACKET_RATE_THRESHOLD = float(os.getenv("SECUREMESH_DOS_THRESHOLD", "30.0"))
+RSSI_SPOOF_JUMP_DBM = float(os.getenv("SECUREMESH_RSSI_JUMP_DBM", "30.0"))
 REPLAY_DUPLICATE_THRESHOLD = int(os.getenv("SECUREMESH_REPLAY_DUPLICATES", "3"))
 INITIAL_TTL = int(os.getenv("SECUREMESH_INITIAL_TTL", "4"))  # firmware sets pkt.ttl = 4 on origination
