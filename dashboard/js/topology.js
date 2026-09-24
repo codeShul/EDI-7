@@ -59,6 +59,7 @@ var Topology = (function () {
       make("circle", { r: NODE_R }, g);
       make("line", { "class": "iso-mark", x1: -14, y1: -14, x2: 14, y2: 14 }, g);
       make("line", { "class": "iso-mark", x1: -14, y1: 14, x2: 14, y2: -14 }, g);
+      var label = make("text", { "class": "node-id", y: 4.5 }, g);
       var nodeNames = {
         1: "1 (68:09)",
         2: "2 (1c:c3)",
