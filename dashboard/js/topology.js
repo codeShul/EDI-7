@@ -60,14 +60,7 @@ var Topology = (function () {
       make("line", { "class": "iso-mark", x1: -14, y1: -14, x2: 14, y2: 14 }, g);
       make("line", { "class": "iso-mark", x1: -14, y1: 14, x2: 14, y2: -14 }, g);
       var label = make("text", { "class": "node-id", y: 4.5 }, g);
-      var nodeNames = {
-        1: "1 (68:09)",
-        2: "2 (1c:c3)",
-        3: "3 (Gateway)",
-        4: "4 (Attacker)",
-        5: "5 (Offline)"
-      };
-      label.textContent = nodeNames[id] || ("N" + id);
+      label.textContent = "N" + id;
       var status = make("text", {
         "class": "node-status",
         x: (Math.cos(p.angle) * LABEL_R).toFixed(1),
