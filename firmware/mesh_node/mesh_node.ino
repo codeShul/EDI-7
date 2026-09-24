@@ -121,11 +121,11 @@ void loop() {
     }
 
     if (random(0, 100) < 5) {
-        int target = random(1, 5); 
-        while(target == NODE_ID) target = random(1, 5);
+        int target = random(1, 4); 
+        while(target == NODE_ID) target = random(1, 4);
         
-        int next_hop = random(1, 5);
-        while(next_hop == NODE_ID) next_hop = random(1, 5);
+        int next_hop = random(1, 4);
+        while(next_hop == NODE_ID) next_hop = random(1, 4);
 
         network_packet pkt;
         pkt.sender_id = NODE_ID;
