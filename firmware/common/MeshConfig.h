@@ -20,7 +20,7 @@ typedef struct __attribute__((packed)) network_packet {
 // ---------------------------------------------------------
 // 2. Hardcoded Node Configuration
 // ---------------------------------------------------------
-#define NODE_ID 4            // CHANGE THIS FOR EACH BOARD YOU FLASH (1, 2, or 3)
+#define NODE_ID 3            // CHANGE THIS FOR EACH BOARD YOU FLASH (1, 2, or 3)
 #define GATEWAY_ID 3           // Let's use Node 3 as the Gateway for now since we have 3 MACs
 
 // Array of known MAC addresses in the mesh (Index corresponds to NODE_ID)
