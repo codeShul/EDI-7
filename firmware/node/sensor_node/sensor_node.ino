@@ -1,6 +1,6 @@
 #include <WiFi.h>
 #include <esp_now.h>
-#include "../common/MeshConfig.h"
+#include "../../common/MeshConfig.h"
 
 // Note: For Phase 1, we assume this is Node 1. 
 // Before flashing other nodes, you would change NODE_ID in MeshConfig.h
