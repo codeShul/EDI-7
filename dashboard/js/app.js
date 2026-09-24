@@ -184,6 +184,10 @@
     } else if (isTx) {
       // TX lines are the sending node's own log (its `source` is the printing
       // node even when relaying), so they do not count as traffic from it.
+      // But DO count them for the sending node's frame counter
+      var txStats = statsFor(src);
+      txStats.sent++;
+      txStats.times.push(Date.now());
       if (t.packet_status === "FAIL") kind = "warn";
     } else {
       var stats = statsFor(src);
@@ -193,6 +197,16 @@
       stats.sent++;
       if (t.rssi_instant !== null && t.rssi_instant !== undefined) stats.rssi = t.rssi_instant;
       if (t.packet_status === "DUP" || t.packet_status === "GAP") kind = "warn";
+
+      // Also track the receiver node (e.g. N3 Gateway) so it appears in the matrix
+      var rcv = Number(t.receiver || dst);
+      if (rcv && rcv !== src) {
+        var rcvStats = statsFor(rcv);
+        rcvStats.times.push(now);
+        recent.push(now);
+        rcvStats.sent++;
+        if (t.rssi_instant !== null && t.rssi_instant !== undefined) rcvStats.rssi = t.rssi_instant;
+      }
     }
 
     PacketInspector.add(t);
@@ -280,37 +294,39 @@
   function targetNode() { return Number($("targetNode").value); }
 
   function wireControls() {
-    document.querySelectorAll(".attack").forEach(function (btn) {
-      btn.addEventListener("click", function () {
-        runAction(function () {
-          return post("/api/simulate/attack", { attack: btn.getAttribute("data-attack"), node_id: targetNode() });
-        }, function (r) { return r.detail; });
+    // Demo controls (only wire if present in the HTML)
+    if ($("targetNode")) {
+      document.querySelectorAll(".attack").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          runAction(function () {
+            return post("/api/simulate/attack", { attack: btn.getAttribute("data-attack"), node_id: targetNode() });
+          }, function (r) { return r.detail; });
+        });
       });
-    });
-    $("btnReset").addEventListener("click", function () {
-      runAction(function () { return post("/api/simulate/reset"); }, function () { return "All attacks stopped, every node restored."; });
-    });
-    $("btnIsolate").addEventListener("click", function () {
-      var id = targetNode();
-      runAction(async function () {
-        var result = await post("/api/control/isolate", { node_id: id });
-        // With a gateway on USB, also tell the mesh (Phase D of docs/integration_steps.md).
-        result.commandSent = await SerialBridge.send("ISOLATE_NODE_" + id);
-        return result;
-      }, function (r) {
-        return "N" + id + " isolated." + (r.commandSent ? " ISOLATE_NODE_" + id + " sent to the gateway." : "");
+      if ($("btnReset")) $("btnReset").addEventListener("click", function () {
+        runAction(function () { return post("/api/simulate/reset"); }, function () { return "All attacks stopped, every node restored."; });
       });
-    });
-    $("btnRestore").addEventListener("click", function () {
-      runAction(function () { return post("/api/control/restore", { node_id: targetNode() }); },
-        function () { return "N" + targetNode() + " restored."; });
-    });
-    $("targetNode").addEventListener("change", function () {
-      var id = targetNode();
-      selectedNode = id;
-      Topology.select(id);
-      renderMatrix();
-    });
+      if ($("btnIsolate")) $("btnIsolate").addEventListener("click", function () {
+        var id = targetNode();
+        runAction(async function () {
+          var result = await post("/api/control/isolate", { node_id: id });
+          result.commandSent = await SerialBridge.send("ISOLATE_NODE_" + id);
+          return result;
+        }, function (r) {
+          return "N" + id + " isolated." + (r.commandSent ? " ISOLATE_NODE_" + id + " sent to the gateway." : "");
+        });
+      });
+      if ($("btnRestore")) $("btnRestore").addEventListener("click", function () {
+        runAction(function () { return post("/api/control/restore", { node_id: targetNode() }); },
+          function () { return "N" + targetNode() + " restored."; });
+      });
+      $("targetNode").addEventListener("change", function () {
+        var id = targetNode();
+        selectedNode = id;
+        Topology.select(id);
+        renderMatrix();
+      });
+    }
 
     var serialButton = $("btnSerial");
     if (!SerialBridge.supported()) {

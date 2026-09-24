@@ -217,6 +217,7 @@ async def handle_message(app: FastAPI, msg: dict) -> Optional[dict]:
         return None
 
     kind = gateway_schema.classify(msg)
+    logger.debug("Serial line: kind=%s msg=%s", kind, msg)
     if kind in ("RX", "TX"):
         packet = gateway_schema.to_packet(msg, kind)
         if packet is None:
