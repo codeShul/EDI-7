@@ -84,6 +84,47 @@ def run_format(root: Path, workdir: Path, fmt: str) -> None:
     print(f"[{fmt}] classes captured: {sorted(labels_seen)}")
 
 
+def run_auto_cycle(root: Path, workdir: Path) -> None:
+    """Node 4 is autonomous now; check the controller-free labeling path
+    directly (no attack_controller.py process involved)."""
+    print("[auto-cycle] running...")
+    csv_file = workdir / "auto_cycle_dataset.csv"
+
+    proc = subprocess.Popen(
+        [sys.executable, str(root / "dataset_generator.py"), "--output", str(csv_file),
+         "--simulate", "--auto-cycle", "--cycle-phase-s", "2", "--transition-buffer", "0.3"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    time.sleep(10.0)   # >1 full cycle (4 phases x 2s) so every label appears
+    proc.terminate()
+    try:
+        proc.wait(timeout=3.0)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+    assert csv_file.exists(), f"[auto-cycle] missing {csv_file}"
+    with open(csv_file, "r", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        header = next(reader)
+        rows = list(reader)
+    assert header == TELEMETRY_COLUMNS, f"[auto-cycle] header mismatch: {header}"
+    assert len(rows) > 5, f"[auto-cycle] too few rows: {len(rows)}"
+
+    labels_seen = [row[-1] for row in rows]
+    order_seen = []
+    for label in labels_seen:
+        if not order_seen or order_seen[-1] != label:
+            order_seen.append(label)
+
+    expected_cycle = ["DoS", "Replay", "Spoofing", "Blackhole"]
+    assert order_seen[0] == "DoS", f"[auto-cycle] must start with DoS immediately: {order_seen}"
+    # order_seen should be a slice of the repeating cycle (allow wrap-around)
+    doubled = expected_cycle * 3
+    joined = ",".join(order_seen)
+    assert joined in ",".join(doubled), f"[auto-cycle] wrong cycle order: {order_seen}"
+    print(f"[auto-cycle] label order: {order_seen}")
+
+
 def check_schema_parsing() -> None:
     """The generator must understand the gateway's unified JSON lines."""
     sys.path.insert(0, str(Path(__file__).parent.resolve()))
@@ -120,6 +161,7 @@ def run_test():
     with tempfile.TemporaryDirectory() as tmp:
         for fmt in FORMATS:
             run_format(root, Path(tmp), fmt)
+        run_auto_cycle(root, Path(tmp))
     print("Test passed successfully.")
 
 

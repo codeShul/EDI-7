@@ -3,8 +3,18 @@
 
 Reads the gateway ESP32's serial output (Node 3 running firmware/mesh_node),
 which prints one flat JSON object per event (docs/serial_json_schema.md):
-RX, TX, TELEMETRY and ALERT. It syncs with attack_controller.py to know which
-attack is active and writes a labeled CSV.
+RX, TX, TELEMETRY and ALERT, and writes a labeled CSV.
+
+Node 4 (docs/attacker_node_requirements.md) is autonomous: it is not a mesh
+member, is not commanded from the PC, and starts cycling through its four
+attacks the instant it boots. There is nothing for attack_controller.py to
+synchronize with, so labeling uses --auto-cycle: a fixed wall-clock schedule
+anchored to when Node 4 was powered on (default: script start time), instead
+of reading a controller-broadcast state file. Run this with --simulate
+--auto-cycle to see it, or against real hardware with --port.
+
+The older --ipc-file mode (reading attack_controller.py's broadcast) still
+works for scripted scenarios that don't involve the autonomous Node 4.
 
 Two CSV formats are supported (--format):
 
@@ -201,6 +211,49 @@ class RollingMetricsAggregator:
         }
 
 
+# Node 4 (docs/attacker_node_requirements.md "Autonomous Operation Model") cycles
+# through these on its own, starting the instant it boots, with no PC command.
+AUTO_CYCLE = ["DoS", "Replay", "Spoofing", "Blackhole"]
+DEFAULT_PHASE_DURATION_S = 30.0  # must match ATTACK_PHASE_DURATION_MS in esp32_attacker.ino
+
+
+class AutoCycleGroundTruth:
+    """Labels rows from a fixed wall-clock schedule instead of a controller
+    broadcast. Node 4 is not commanded from the PC, so there is nothing to read
+    a "which attack is active" state from — instead this assumes Node 4 was
+    powered on at `power_on_time` and is cycling DoS -> Replay -> Spoofing ->
+    Blackhole -> DoS -> ... forever, `phase_duration_s` each, starting
+    immediately (no idle/Normal gap between phases once it has booted)."""
+
+    def __init__(self, power_on_time: float, phase_duration_s: float = DEFAULT_PHASE_DURATION_S,
+                 transition_buffer_s: float = 1.5, cycle=AUTO_CYCLE):
+        self.power_on_time = power_on_time
+        self.phase_duration_s = phase_duration_s
+        self.transition_buffer_s = transition_buffer_s
+        self.cycle = list(cycle)
+        self.cycle_length_s = phase_duration_s * len(self.cycle)
+        self.last_state = "Normal"
+
+    def get_ground_truth(self, current_time: float) -> Tuple[str, bool]:
+        if current_time < self.power_on_time:
+            return "Normal", False
+
+        elapsed = current_time - self.power_on_time
+        position = elapsed % self.cycle_length_s
+        index = int(position // self.phase_duration_s)
+        label = self.cycle[index]
+        time_into_phase = position - index * self.phase_duration_s
+
+        if label != self.last_state:
+            logger.info("Auto-cycle transition: %s -> %s", self.last_state, label)
+            self.last_state = label
+
+        return label, time_into_phase < self.transition_buffer_s
+
+    def parameters(self) -> Dict:
+        return {}  # the firmware picks its own random target; nothing to report here
+
+
 class GroundTruthReader:
     """Reads state from controller and discards transition boundary rows."""
 
@@ -377,6 +430,9 @@ class DatasetGenerator:
         transition_buffer_s: float = 1.5,
         window_seconds: float = 2.0,
         output_format: str = FORMAT_TELEMETRY,
+        auto_cycle: bool = False,
+        power_on_time: Optional[float] = None,
+        cycle_phase_s: float = DEFAULT_PHASE_DURATION_S,
     ):
         if output_format not in (FORMAT_TELEMETRY, FORMAT_FEATURES):
             raise ValueError(f"Unknown format {output_format!r}")
@@ -387,7 +443,15 @@ class DatasetGenerator:
         self.output_format = output_format
         self.running = True
 
-        self.gt_reader = GroundTruthReader(Path(ipc_file).resolve(), transition_buffer_s=transition_buffer_s)
+        if auto_cycle:
+            # Node 4 is autonomous (no controller broadcast to read); label from
+            # a fixed schedule anchored to when it was powered on.
+            self.gt_reader = AutoCycleGroundTruth(
+                power_on_time=power_on_time if power_on_time is not None else time.time(),
+                phase_duration_s=cycle_phase_s, transition_buffer_s=transition_buffer_s,
+            )
+        else:
+            self.gt_reader = GroundTruthReader(Path(ipc_file).resolve(), transition_buffer_s=transition_buffer_s)
         self.aggregator = RollingMetricsAggregator(window_seconds=window_seconds)
 
         self.rows_written = 0
@@ -512,7 +576,18 @@ def main():
                         help="telemetry: one row per TELEMETRY line (integration_steps.md); "
                              "features: 12-column schema from RX lines")
     parser.add_argument("--simulate", "-s", action="store_true", help="Use simulated gateway stream")
-    parser.add_argument("--ipc-file", type=str, default=".ground_truth_state.json", help="Ground truth state file")
+    parser.add_argument("--ipc-file", type=str, default=".ground_truth_state.json",
+                         help="Ground truth state file written by attack_controller.py (ignored with --auto-cycle)")
+    parser.add_argument("--auto-cycle", action="store_true",
+                         help="Label from Node 4's fixed autonomous schedule (DoS->Replay->Spoofing->Blackhole, "
+                              "repeating) instead of a controller broadcast. Use this for the current firmware; "
+                              "attack_controller.py has nothing to synchronize with since Node 4 is not commanded.")
+    parser.add_argument("--power-on-time", type=float, default=None,
+                         help="Epoch seconds when Node 4 was powered on (--auto-cycle only). "
+                              "Default: now, i.e. start this script the moment you power it on.")
+    parser.add_argument("--cycle-phase-s", type=float, default=DEFAULT_PHASE_DURATION_S,
+                         help="Seconds per attack phase in the auto-cycle schedule; must match "
+                              "ATTACK_PHASE_DURATION_MS in esp32_attacker.ino")
     parser.add_argument("--transition-buffer", type=float, default=1.5, help="Transition discard window in seconds")
     parser.add_argument("--limit", type=int, default=None, help="Row limit")
 
@@ -531,6 +606,9 @@ def main():
         ipc_file=args.ipc_file,
         transition_buffer_s=args.transition_buffer,
         output_format=args.format,
+        auto_cycle=args.auto_cycle,
+        power_on_time=args.power_on_time,
+        cycle_phase_s=args.cycle_phase_s,
     )
 
     def handle_exit(signum, frame):

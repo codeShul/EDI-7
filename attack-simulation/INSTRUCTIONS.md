@@ -2,7 +2,9 @@
 
 This folder contains the complete attack orchestration and dataset generation toolkit for Member 2 of the SecureMesh AI project.
 
-It allows you to run controlled attack scenarios (DoS, Replay, Spoofing, Rogue Node) against the ESP32 mesh testbed and generate labeled CSV datasets for Member 3's ML intrusion detection pipeline.
+It generates labeled CSV datasets (DoS, Replay, Spoofing, Blackhole, Rogue Node) from the ESP32 mesh testbed for Member 3's ML intrusion detection pipeline.
+
+Node 4, the attacker, is **autonomous**: not a mesh member, not commanded from the PC, and it starts cycling through its attacks the instant it boots (see `docs/attacker_node_requirements.md` "Autonomous Operation Model"). `dataset_generator.py --auto-cycle` is the primary way to label data against it; `attack_controller.py` remains for the older controller-driven workflow.
 
 ---
 
@@ -10,9 +12,9 @@ It allows you to run controlled attack scenarios (DoS, Replay, Spoofing, Rogue N
 
 | File | Description |
 |---|---|
-| `attack_controller.py` | CLI orchestrator. Sends attack mode commands to the attacker ESP32 and broadcasts ground-truth state. |
-| `dataset_generator.py` | Listens to the gateway's unified JSON output (`docs/serial_json_schema.md`) and writes labeled CSV rows (`--format telemetry` by default, `--format features` for the 12-column schema). |
-| `esp32_attacker.ino` | Firmware skeleton for the attacker ESP32 (Node 4): state machine and serial parser are done; the attack payload functions are still stubs (see `docs/attacker_node_requirements.md`). |
+| `dataset_generator.py` | Listens to the gateway's unified JSON output (`docs/serial_json_schema.md`) and writes labeled CSV rows (`--format telemetry` by default, `--format features` for the 12-column schema). `--auto-cycle` labels from Node 4's fixed autonomous schedule; without it, labels come from `attack_controller.py`'s broadcast (or default to `Normal` if nothing is broadcasting). |
+| `esp32_attacker.ino` | Firmware for the attacker ESP32 (Node 4): boot-time random target selection and the autonomous attack-cycle scheduler are done; the four attack payload functions are still stubs (see `docs/attacker_node_requirements.md`). |
+| `attack_controller.py` | CLI orchestrator for the older, PC-commanded attacker model. Sends attack mode commands over serial and broadcasts ground-truth state for `dataset_generator.py`'s `--ipc-file` mode. Not needed for the current autonomous Node 4 firmware. |
 | `attack_characteristics.md` | Reference guide describing expected telemetry signatures for each attack class. |
 | `scenarios/` | JSON files defining multi-phase attack schedules (`default_scenario.json`, `fast_test_scenario.json`). |
 | `mock_attacker.py` | Standalone serial emulator for testing without physical hardware. |
@@ -38,25 +40,30 @@ pip install pyserial
 
 You can run and test the entire system on your laptop without any ESP32 boards plugged in.
 
-### Step 1: Start the Dataset Generator
-Open Terminal 1:
-```bash
-python dataset_generator.py --simulate --output dataset.csv
-```
-The generator starts listening for synthetic mesh telemetry.
+> Node 4 (`esp32_attacker.ino`) is autonomous — it is not a mesh member, is not
+> commanded from the PC, and starts cycling `DoS -> Replay -> Spoofing ->
+> Blackhole -> DoS -> ...` (30s each) the instant it boots. There is nothing to
+> control from a second terminal for it, so labeling comes from
+> `--auto-cycle` instead of `attack_controller.py`.
 
-### Step 2: Run an Attack Scenario
-Open Terminal 2:
+### Step 1: Run the Dataset Generator with the autonomous schedule
 ```bash
+python dataset_generator.py --simulate --auto-cycle --output dataset.csv
+```
+This is one command, one terminal — the built-in simulator behaves like the autonomous firmware, and `--auto-cycle` labels rows from the same fixed schedule described above (starting from the moment this command runs).
+
+### Step 2: View the Generated Dataset
+Open `dataset.csv` in Excel or VS Code. Each row is one `TELEMETRY` sample (`timestamp, reporter, target, rate, avg_rssi, drops`) plus its label (`Normal`, `DoS`, `Replay`, `Spoofing`, `Blackhole`). Add `--format features` to get the 12-column schema instead, which also captures `Rogue_Node`.
+
+### Alternative: scripted scenarios via the controller
+
+`attack_controller.py` still works against the older, controller-driven ground-truth mode (`--ipc-file`, the default when `--auto-cycle` is not passed) — useful for testing the `features` pipeline or a `ROGUE_NODE` phase, neither of which the autonomous cycle covers:
+```bash
+# Terminal 1
+python dataset_generator.py --simulate --output dataset.csv
+# Terminal 2
 python attack_controller.py --mock --scenario scenarios/default_scenario.json
 ```
-The controller will execute the scenario phases:
-`Normal (25s) -> DoS (20s) -> Normal (15s) -> Replay (20s) -> Normal (15s) -> Spoofing (20s) -> Normal (15s) -> Blackhole (20s) -> Normal (15s) -> Rogue Node (20s) -> Normal (20s)`
-
-As the controller switches modes, `dataset_generator.py` reads the active state and automatically labels every recorded row.
-
-### Step 3: View the Generated Dataset
-Open `dataset.csv` in Excel or VS Code. Each row is one `TELEMETRY` sample (`timestamp, reporter, target, rate, avg_rssi, drops`) plus its label (`Normal`, `DoS`, `Replay`, `Spoofing`, `Blackhole`). Add `--format features` to get the 12-column schema instead, which also captures `Rogue_Node`.
 
 ---
 
@@ -69,42 +76,29 @@ Open `dataset.csv` in Excel or VS Code. Each row is one `TELEMETRY` sample (`tim
 4. Connect your designated attacker ESP32 via USB and select its COM port (e.g. `COM10`).
 5. Click **Upload**.
 
+Node 4 needs no further setup after this — leave it powered off until Step 4.
+
 ### Step 2: Flash the Gateway Board
 Flash `firmware/mesh_node/mesh_node.ino` onto the gateway ESP32 with `NODE_ID 3` in `firmware/common/MeshConfig.h` (e.g. `COM9`). It prints one JSON line per event (`RX`, `TX`, `TELEMETRY`, `ALERT`) over USB serial. Nodes 1 and 2 run the same firmware with their own `NODE_ID`.
 
-> **Important:** the gateway only hears frames addressed to it, and it is the only node whose serial port is logged. Aim attacks at Node 3 (the controller's default for DoS) or they will not show up in the dataset.
+> **Important:** the gateway only hears frames addressed to it, and it is the only node whose serial port is logged. Node 4 targets a random node among 1-3 by itself; if it happens to pick a node other than 3, that phase's frames will not show up in the dataset (a real limitation of the current design, not a bug).
 
-### Step 3: Start the Dataset Generator
-In your terminal, connect `dataset_generator.py` to your gateway COM port:
+Node 4 is autonomous now, so there is no attack controller step. Capture the dataset in two passes instead — a clean baseline with Node 4 off, then an attack capture from the moment it is powered on:
+
+### Step 3: Capture a clean baseline (Node 4 still powered off)
 ```bash
-python dataset_generator.py --port COM9 --baud 115200 --output testbed_dataset.csv
+python dataset_generator.py --port COM9 --baud 115200 --output baseline.csv
 ```
+Let it run for a few minutes, then stop it (Ctrl+C). Every row is labeled `Normal` (no `--auto-cycle`, so it defaults to the plain "no attack active" reader).
 
-### Step 4: Run the Attack Controller
-In a second terminal, connect `attack_controller.py` to your attacker board COM port:
-
-**Option A: Interactive Menu**
+### Step 4: Capture the attack cycle
+Start this the same moment you power on Node 4, so its logged schedule lines up with when Node 4 actually starts attacking:
 ```bash
-python attack_controller.py --port COM10 --interactive
+python dataset_generator.py --port COM9 --baud 115200 --output attack.csv --auto-cycle
 ```
-You will see a menu:
-```text
-=== SecureMesh Attack Controller CLI ===
-1. Set NORMAL (Baseline)
-2. Trigger DOS (Packet Flood)
-3. Trigger REPLAY (Old Sequence Numbers)
-4. Trigger SPOOFING (Impersonate a Node)
-5. Trigger BLACKHOLE (Drop Relayed Packets)
-6. Trigger ROGUE_NODE (Unregistered Node ID)
-7. Stop / Return to Idle
-0. Exit
-```
-Enter a number to trigger the attack for a chosen duration.
+It labels rows `DoS -> Replay -> Spoofing -> Blackhole -> DoS -> ...` (30s each, matching the firmware's `ATTACK_PHASE_DURATION_MS`) starting from the moment this command runs. Let it run for a few full cycles, then stop it.
 
-**Option B: Automated Scenario**
-```bash
-python attack_controller.py --port COM10 --scenario scenarios/default_scenario.json
-```
+Merge `baseline.csv` and `attack.csv` (same columns, just concatenate the rows) for training.
 
 ---
 

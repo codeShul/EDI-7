@@ -1,8 +1,19 @@
 #!/usr/bin/env python3
 """Attack simulation controller for SecureMesh AI testbed.
 
-Sends control commands to the attacker ESP32 (Node 4, esp32_attacker/) over
-serial and broadcasts the active attack state for dataset auto-labeling.
+NOTE: Node 4's current firmware (esp32_attacker.ino, per the "Autonomous
+Operation Model" in docs/attacker_node_requirements.md) is NOT commanded from
+the PC. It picks its own target at boot and immediately starts cycling
+through DoS -> Replay -> Spoofing -> Blackhole on its own fixed schedule. This
+controller has nothing to command for that firmware — use
+`dataset_generator.py --auto-cycle` instead, which labels rows from that fixed
+schedule directly and needs no controller process at all.
+
+This script remains useful for:
+  - `--mock` scenario runs against dataset_generator's older --ipc-file mode
+    (e.g. for testing the 12-column `features` pipeline without hardware).
+  - A future/alternate attacker firmware that does listen for commands, or
+    the ROGUE_NODE mode, which has no autonomous equivalent below.
 
 Attack modes: DOS, REPLAY, SPOOFING, BLACKHOLE, ROGUE_NODE. Parameters sent to
 the firmware (all optional):

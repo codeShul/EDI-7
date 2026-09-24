@@ -5,14 +5,33 @@ This document provides the necessary context and requirements for developing the
 ## System Context
 
 We have a decentralized ESP32 mesh network using ESP-NOW.
-- **Node IDs:** 1, 2, 3 are normal nodes. 4 is the attacker.
-- **Gateway:** Node 3 acts as the gateway, logging telemetry to the PC via Serial.
-- **Normal Behavior:** Nodes randomly send packets to each other at a low rate (1-5 packets per second). The `TelemetryEngine` tracks packet rate, RSSI, and dropped packets (sequence gaps).
+- **Node IDs:** 1, 2, 3 are normal nodes and only talk to each other (`firmware/mesh_node/mesh_node.ino` picks targets/next-hops from `random(1, 4)`, i.e. never 4). **Node 4 is not a mesh member** — it does not receive normal traffic and is not treated as trusted.
+- **Gateway:** Node 3 acts as the gateway, logging telemetry to the PC via Serial. It only sees frames addressed to it, so an attack must target Node 3 (or a node relaying through it) to be visible in the captured data at all.
+- **Normal Behavior:** Nodes 1-3 randomly send packets to each other at a low rate (1-5 packets per second). The `TelemetryEngine` tracks packet rate, RSSI, and dropped packets (sequence gaps).
 - **Communication:** All nodes share a common `network_packet` struct and hardcoded MAC address table (`MeshConfig.h`).
 
 ## The Goal
 
-Your goal is to write custom firmware for Node 4 (e.g., `attacker_node.ino`) that deliberately violates the normal network behavior to trigger the Intrusion Detection System (IDS). You will simulate four distinct types of attacks.
+Your goal is to write custom firmware for Node 4 (`esp32_attacker.ino`) that deliberately violates the normal network behavior to trigger the Intrusion Detection System (IDS). You will simulate four distinct types of attacks.
+
+## Autonomous Operation Model
+
+Unlike the earlier design, Node 4 is **not commanded from the PC**. There is no baseline/idle period to wait for a serial command in normal operation:
+
+1. **On boot**, after ESP-NOW init (register peers exactly like a normal node, per "Required Includes & Setup" below), pick **one random target** from the known mesh MAC table (`mesh_macs[1..3]`, i.e. any of nodes 1, 2 or 3 — never itself). Keep that same target for the whole session; do not re-pick per attack phase.
+2. **Immediately** begin the attack cycle — no waiting, no idle state.
+3. **Cycle through all four attacks automatically**, one after another, looping forever:
+   `DoS -> Replay -> Spoofing -> Blackhole -> DoS -> ...`
+   Each phase runs for a fixed dwell time (`ATTACK_PHASE_DURATION_MS`, suggested default 30000 = 30s) before advancing to the next. There is no gap or "NORMAL" phase between them — Node 4 is always attacking once it has booted.
+4. The existing serial `STOP` / `STATUS` commands (see `parseJsonCommand`) may still be kept as an optional manual override/debugging aid, but nothing needs to send `{"mode": ...}` to start it — that handshake from `attack_controller.py` is no longer required for Node 4's own state machine.
+
+### Why this changes the dataset workflow
+
+`attack_controller.py`'s original job — commanding the attacker and broadcasting which attack is active so `dataset_generator.py` can label rows — no longer has anything to synchronize with, since nothing on the PC decides when Node 4 switches modes. Instead:
+
+- Capture a **clean baseline** with Node 4 powered off (or physically disconnected).
+- Then power Node 4 on and start `dataset_generator.py --auto-cycle` (see `attack-simulation/INSTRUCTIONS.md`), which labels rows purely from elapsed time against the same fixed 4-phase schedule described above — no IPC file, no controller process needed.
+- Keep the firmware's dwell time and the generator's `--cycle-phase-s` in sync (both default to 30s).
 
 ## Required Includes & Setup
 
@@ -59,6 +78,6 @@ You need to implement functions to trigger the following attacks, likely control
 
 ## Development Workflow
 
-1.  **Create the Firmware:** Write `attacker_node.ino` implementing these behaviors.
+1.  **Create the Firmware:** Finish `attack-simulation/esp32_attacker.ino` implementing these behaviors (the state machine, boot-time target selection, and cycle scheduler are already there — the four `run*Mode()` attack payload functions are still TODO stubs).
 2.  **Flash Node 4:** Upload the firmware to the ESP32 designated as Node 4.
-3.  **Coordinate with Gateway:** Run the mesh. Trigger an attack on Node 4 and observe the Serial Monitor on the Gateway (Node 3). You should see the telemetry JSON reflecting the anomalous behavior (e.g., massive rate spikes, sequence errors, or RSSI shifts).
+3.  **Observe:** Power on Nodes 1-3 and the gateway first, then power on Node 4. It attacks immediately, no PC command needed. Watch the Serial Monitor on the Gateway (Node 3) — you should see the telemetry JSON reflecting the anomalous behavior (e.g., massive rate spikes, sequence errors, or RSSI shifts) within one dwell period (30s) of Node 4 powering on.
