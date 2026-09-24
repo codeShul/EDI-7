@@ -11,8 +11,8 @@ It allows you to run controlled attack scenarios (DoS, Replay, Spoofing, Rogue N
 | File | Description |
 |---|---|
 | `attack_controller.py` | CLI orchestrator. Sends attack mode commands to the attacker ESP32 and broadcasts ground-truth state. |
-| `dataset_generator.py` | Listens to gateway telemetry, computes rolling link metrics, and outputs labeled CSV rows. |
-| `esp32_attacker.ino` | Firmware skeleton for the attacker ESP32 (state machine, serial parser, and attack stubs). |
+| `dataset_generator.py` | Listens to the gateway's unified JSON output (`docs/serial_json_schema.md`) and writes labeled CSV rows (`--format telemetry` by default, `--format features` for the 12-column schema). |
+| `esp32_attacker.ino` | Firmware skeleton for the attacker ESP32 (Node 4): state machine and serial parser are done; the attack payload functions are still stubs (see `docs/attacker_node_requirements.md`). |
 | `attack_characteristics.md` | Reference guide describing expected telemetry signatures for each attack class. |
 | `scenarios/` | JSON files defining multi-phase attack schedules (`default_scenario.json`, `fast_test_scenario.json`). |
 | `mock_attacker.py` | Standalone serial emulator for testing without physical hardware. |
@@ -51,12 +51,12 @@ Open Terminal 2:
 python attack_controller.py --mock --scenario scenarios/default_scenario.json
 ```
 The controller will execute the scenario phases:
-`Normal (25s) -> DoS (20s) -> Normal (15s) -> Replay (20s) -> Normal (15s) -> Spoofing (20s) -> Normal (15s) -> Rogue Node (20s) -> Normal (20s)`
+`Normal (25s) -> DoS (20s) -> Normal (15s) -> Replay (20s) -> Normal (15s) -> Spoofing (20s) -> Normal (15s) -> Blackhole (20s) -> Normal (15s) -> Rogue Node (20s) -> Normal (20s)`
 
 As the controller switches modes, `dataset_generator.py` reads the active state and automatically labels every recorded row.
 
 ### Step 3: View the Generated Dataset
-Open `dataset.csv` in Excel or VS Code. Each row will have all 12 telemetry features and the corresponding label (`Normal`, `DoS`, `Replay`, `Spoofing`, `Rogue_Node`).
+Open `dataset.csv` in Excel or VS Code. Each row is one `TELEMETRY` sample (`timestamp, reporter, target, rate, avg_rssi, drops`) plus its label (`Normal`, `DoS`, `Replay`, `Spoofing`, `Blackhole`). Add `--format features` to get the 12-column schema instead, which also captures `Rogue_Node`.
 
 ---
 
@@ -70,7 +70,9 @@ Open `dataset.csv` in Excel or VS Code. Each row will have all 12 telemetry feat
 5. Click **Upload**.
 
 ### Step 2: Flash the Gateway Board
-Flash `firmware/gateway_node/gateway_node.ino` onto your gateway ESP32 (e.g. `COM9`). This board listens to mesh radio packets and prints JSON lines over USB serial.
+Flash `firmware/mesh_node/mesh_node.ino` onto the gateway ESP32 with `NODE_ID 3` in `firmware/common/MeshConfig.h` (e.g. `COM9`). It prints one JSON line per event (`RX`, `TX`, `TELEMETRY`, `ALERT`) over USB serial. Nodes 1 and 2 run the same firmware with their own `NODE_ID`.
+
+> **Important:** the gateway only hears frames addressed to it, and it is the only node whose serial port is logged. Aim attacks at Node 3 (the controller's default for DoS) or they will not show up in the dataset.
 
 ### Step 3: Start the Dataset Generator
 In your terminal, connect `dataset_generator.py` to your gateway COM port:
@@ -90,10 +92,11 @@ You will see a menu:
 === SecureMesh Attack Controller CLI ===
 1. Set NORMAL (Baseline)
 2. Trigger DOS (Packet Flood)
-3. Trigger REPLAY (Sequence Injection)
-4. Trigger SPOOFING (MAC / Identity)
-5. Trigger ROGUE_NODE (Unregistered Node)
-6. Stop / Return to Idle
+3. Trigger REPLAY (Old Sequence Numbers)
+4. Trigger SPOOFING (Impersonate a Node)
+5. Trigger BLACKHOLE (Drop Relayed Packets)
+6. Trigger ROGUE_NODE (Unregistered Node ID)
+7. Stop / Return to Idle
 0. Exit
 ```
 Enter a number to trigger the attack for a chosen duration.
@@ -107,7 +110,23 @@ python attack_controller.py --port COM10 --scenario scenarios/default_scenario.j
 
 ## 5. Telemetry Schema Reference
 
-The CSV output follows the fixed 12-column schema required by Member 3's ML models:
+### `--format telemetry` (default, `docs/integration_steps.md` Phase A)
+
+| Column | Description |
+|---|---|
+| `timestamp` | Epoch seconds when the line was logged |
+| `reporter` | Node that computed the statistic (the gateway, 3) |
+| `target` | Peer being profiled |
+| `rate` | Packets received from that peer in the last second |
+| `avg_rssi` | Average signal strength from that peer (dBm) |
+| `drops` | Cumulative missing sequence numbers (includes frames sent to other nodes, so it is not pure loss) |
+| `label` | Ground truth: `Normal`, `DoS`, `Replay`, `Spoofing`, `Blackhole` |
+
+Known limits of this format: the firmware's `TELEMETRY` only covers node IDs 1-5, so a rogue node is invisible (rogue-phase rows are skipped rather than mislabeled), and replayed frames with old sequence numbers are ignored by it, so a replay only shows as a small rate bump. Use `--format features` if you need those.
+
+### `--format features` (12 columns, built from `RX` lines)
+
+The fixed 12-column schema used by the ML feature-engineering guide:
 
 | Column | Type | Description |
 |---|---|---|

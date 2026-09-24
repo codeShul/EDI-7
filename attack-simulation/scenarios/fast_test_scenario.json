@@ -48,6 +48,16 @@
       "description": "Inter-attack normal baseline"
     },
     {
+      "mode": "BLACKHOLE",
+      "duration_s": 5,
+      "description": "Blackhole test (relayed frames dropped)"
+    },
+    {
+      "mode": "NORMAL",
+      "duration_s": 3,
+      "description": "Inter-attack normal baseline"
+    },
+    {
       "mode": "ROGUE_NODE",
       "duration_s": 5,
       "parameters": {

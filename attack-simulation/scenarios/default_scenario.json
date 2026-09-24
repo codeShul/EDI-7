@@ -48,6 +48,16 @@
       "description": "Recovery to normal baseline traffic"
     },
     {
+      "mode": "BLACKHOLE",
+      "duration_s": 20,
+      "description": "Attacker accepts frames to relay and drops them"
+    },
+    {
+      "mode": "NORMAL",
+      "duration_s": 15,
+      "description": "Recovery to normal baseline traffic"
+    },
+    {
       "mode": "ROGUE_NODE",
       "duration_s": 20,
       "parameters": {

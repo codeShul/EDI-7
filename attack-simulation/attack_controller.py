@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """Attack simulation controller for SecureMesh AI testbed.
 
-Sends control commands to the attacker ESP32 over serial and broadcasts
-active attack state for dataset auto-labeling.
+Sends control commands to the attacker ESP32 (Node 4, esp32_attacker/) over
+serial and broadcasts the active attack state for dataset auto-labeling.
+
+Attack modes: DOS, REPLAY, SPOOFING, BLACKHOLE, ROGUE_NODE. Parameters sent to
+the firmware (all optional):
+    DOS         packet_rate_ms (10), target_node_id (3 = gateway)
+    REPLAY      packet_rate_ms (200)
+    SPOOFING    target_node_id = the node ID to impersonate (2)
+    ROGUE_NODE  unauthorized_id (99)
+    BLACKHOLE   none
 """
 
 from __future__ import annotations
@@ -20,7 +28,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-VALID_MODES = ["NORMAL", "DOS", "REPLAY", "SPOOFING", "ROGUE_NODE", "IDLE"]
+ATTACK_MODES = ["DOS", "REPLAY", "SPOOFING", "BLACKHOLE", "ROGUE_NODE"]
+VALID_MODES = ["NORMAL", *ATTACK_MODES, "IDLE"]
+
+# The gateway (Node 3, docs/integration_steps.md) is the only node whose serial
+# port is logged, and it only hears frames addressed to it, so attacks are
+# aimed at it by default.
+GATEWAY_ID = 3
 
 logger = logging.getLogger("AttackController")
 
@@ -46,7 +60,7 @@ class MockAttackerSerial:
                 self.current_mode = "NONE"
                 self.current_state = "IDLE"
                 self._respond({"type": "STATE_REPORT", "state": "IDLE", "mode": "NONE", "time_remaining_s": 0.0})
-            elif mode in ["DOS", "REPLAY", "SPOOFING", "ROGUE_NODE"]:
+            elif mode in ATTACK_MODES:
                 self.current_mode = mode
                 self.current_state = "MODE_ACTIVE"
                 self.mode_start_time = time.time()
@@ -259,15 +273,16 @@ class AttackController:
         print(f"Attacker Node: Node {self.attacker_id} | Serial: {self.serial_port or 'Mock'}")
         print("1. Set NORMAL (Baseline)")
         print("2. Trigger DOS (Packet Flood)")
-        print("3. Trigger REPLAY (Sequence Injection)")
-        print("4. Trigger SPOOFING (MAC / Identity)")
-        print("5. Trigger ROGUE_NODE (Unregistered Node)")
-        print("6. Stop / Return to Idle")
+        print("3. Trigger REPLAY (Old Sequence Numbers)")
+        print("4. Trigger SPOOFING (Impersonate a Node)")
+        print("5. Trigger BLACKHOLE (Drop Relayed Packets)")
+        print("6. Trigger ROGUE_NODE (Unregistered Node ID)")
+        print("7. Stop / Return to Idle")
         print("0. Exit")
 
         while self.running:
             try:
-                choice = input("\nSelect option (0-6) > ").strip()
+                choice = input("\nSelect option (0-7) > ").strip()
                 if choice == "0":
                     break
                 elif choice == "1":
@@ -276,19 +291,23 @@ class AttackController:
                 elif choice == "2":
                     dur = int(input("Duration in seconds [60]: ").strip() or "60")
                     rate = int(input("Packet rate ms [10]: ").strip() or "10")
-                    self.send_command("DOS", dur, {"packet_rate_ms": rate})
+                    target = int(input(f"Target Node ID [{GATEWAY_ID} = gateway]: ").strip() or str(GATEWAY_ID))
+                    self.send_command("DOS", dur, {"packet_rate_ms": rate, "target_node_id": target})
                 elif choice == "3":
                     dur = int(input("Duration in seconds [45]: ").strip() or "45")
-                    self.send_command("REPLAY", dur, {"repeat_window_s": 5})
+                    self.send_command("REPLAY", dur, {"packet_rate_ms": 200})
                 elif choice == "4":
                     dur = int(input("Duration in seconds [45]: ").strip() or "45")
-                    target = int(input("Target Node ID [2]: ").strip() or "2")
+                    target = int(input("Node ID to impersonate [2]: ").strip() or "2")
                     self.send_command("SPOOFING", dur, {"target_node_id": target})
                 elif choice == "5":
+                    dur = int(input("Duration in seconds [60]: ").strip() or "60")
+                    self.send_command("BLACKHOLE", dur)
+                elif choice == "6":
                     dur = int(input("Duration in seconds [45]: ").strip() or "45")
                     rogue_id = int(input("Rogue Node ID [99]: ").strip() or "99")
                     self.send_command("ROGUE_NODE", dur, {"unauthorized_id": rogue_id})
-                elif choice == "6":
+                elif choice == "7":
                     self.stop_all()
                 else:
                     print("Invalid choice.")
