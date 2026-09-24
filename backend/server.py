@@ -158,7 +158,9 @@ async def handle_packet(app: FastAPI, packet: dict) -> Optional[dict]:
         return None
 
     await app.state.db.insert_telemetry(telemetry)
-    await _touch_node(app, telemetry["source"])
+    await _touch_node(app, str(telemetry["source"]))
+    if packet.get("receiver"):
+        await _touch_node(app, str(packet["receiver"]))
     await manager.broadcast({"type": "telemetry", "data": telemetry})
 
     verdict = app.state.decision_engine.evaluate(telemetry)
@@ -172,6 +174,8 @@ async def handle_tx(app: FastAPI, packet: dict) -> dict:
     printing node even when relaying, so it must not feed sequence tracking."""
     status = "FAIL" if packet.get("delivery") == "FAIL" else "OK"
     view = _packet_view(packet, status)
+    if packet.get("src"):
+        await _touch_node(app, str(packet["src"]))
     await manager.broadcast({"type": "telemetry", "data": view})
     return view
 
@@ -180,6 +184,9 @@ async def handle_peer_stats(app: FastAPI, stats: dict) -> dict:
     """A TELEMETRY line: one peer's statistics over the reporter's last second."""
     stats = {**stats, "timestamp": time.time()}
     await manager.broadcast({"type": "peer_telemetry", "data": stats})
+
+    if stats.get("reporter"):
+        await _touch_node(app, str(stats["reporter"]))
 
     if stats["peer"] not in app.state.recovery.isolated:
         verdict = app.state.decision_engine.evaluate_peer(stats["peer"], stats["reporter"], stats["rate"])
