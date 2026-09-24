@@ -99,11 +99,11 @@ void loop() {
     // OCCASIONALLY GENERATE MESH TRAFFIC
     // We only generate a packet 1% of the loop cycles to allow time for processing
     if (random(0, 100) < 5) {
-        int target = random(1, 4); 
-        while(target == NODE_ID) target = random(1, 4);
+        int target = random(1, 5); 
+        while(target == NODE_ID) target = random(1, 5);
         
-        int next_hop_mac = random(1, 4);
-        while(next_hop_mac == NODE_ID) next_hop_mac = random(1, 4);
+        int next_hop_mac = random(1, 5);
+        while(next_hop_mac == NODE_ID) next_hop_mac = random(1, 5);
 
         network_packet pkt;
         pkt.sender_id = NODE_ID;
